@@ -1,0 +1,56 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Techlan Sensor",
+        "description": "Подключение к ARM WebSocket-прокси через HTTP-сервер 18081.",
+        "data": {
+          "base_url": "Адрес ARM Web",
+          "arm_id": "Идентификатор АРМ",
+          "password": "Пароль ServerSkif"
+        }
+      },
+      "select_loops": {
+        "title": "Выбор шлейфов",
+        "description": "Выберите шлейфы для опроса. Температурные ШС будут созданы как датчики температуры и будут автоматически добавлены в опрос.",
+        "data": {
+          "selected_loops": "Шлейфы для опроса",
+          "temperature_loops": "Температурные ШС",
+          "temperature_scale": "Коэффициент температуры",
+          "temperature_offset": "Смещение температуры, °C",
+          "humidity_loops": "ШС влажности",
+          "humidity_scale": "Коэффициент влажности",
+          "humidity_offset": "Смещение влажности, %"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Настройки подключения ARM",
+        "description": "Изменение адреса, портов и интервала опроса. Пароль оставьте пустым, чтобы сохранить текущий.",
+        "data": {
+          "base_url": "Адрес ARM Web",
+          "arm_id": "Идентификатор АРМ",
+          "password": "Новый пароль ServerSkif",
+          "ws_path": "Путь WebSocket",
+          "scan_interval": "Интервал опроса, секунд",
+          "selected_loops": "Шлейфы для опроса",
+          "temperature_loops": "Температурные ШС",
+          "temperature_scale": "Коэффициент температуры",
+          "temperature_offset": "Смещение температуры, °C",
+          "humidity_loops": "ШС влажности",
+          "humidity_scale": "Коэффициент влажности",
+          "humidity_offset": "Смещение влажности, %"
+        }
+      }
+    }
+  },
+    "error": {
+      "cannot_connect": "Не удалось подключиться к ARM WebSocket или авторизоваться в ServerSkif"
+    },
+    "abort": {
+      "already_configured": "Этот адрес ARM уже настроен"
+    }
+}

@@ -1,0 +1,11 @@
+{
+  "domain": "techlan_sensor",
+  "name": "Techlan Sensor",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://core.tl.local:8443/ohrana.htm",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "requirements": ["websocket-client>=1.8.0"],
+  "version": "0.3.0"
+}

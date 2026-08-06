@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 256">
+  <rect width="720" height="256" rx="42" fill="#0b2345"/>
+  <path d="M128 30 207 59v61c0 54-32 83-79 106-47-23-79-52-79-106V59z" fill="#159a9c" stroke="#e9ffff" stroke-width="9"/>
+  <path d="m86 128 27 27 57-61" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="18"/>
+  <text x="250" y="117" fill="#fff" font-family="Arial,sans-serif" font-size="52" font-weight="700">ARM-OPS</text>
+  <text x="253" y="165" fill="#8de2df" font-family="Arial,sans-serif" font-size="25">TECHLAN • SERVER SKIF</text>
+</svg>

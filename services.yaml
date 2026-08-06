@@ -1,0 +1,59 @@
+arm_part:
+  name: Взять раздел под охрану
+  description: Взять один раздел ARM под охрану. Требуется явное подтверждение.
+  fields:
+    pku:
+      name: ПКУ
+      description: Номер пульта управления.
+      required: true
+      example: 16
+      selector:
+        number:
+          min: 1
+          mode: box
+    part:
+      name: Раздел
+      description: Номер раздела на выбранном ПКУ.
+      required: true
+      example: 4
+      selector:
+        number:
+          min: 1
+          mode: box
+    confirm:
+      name: Подтверждение
+      description: Должно быть true для отправки команды.
+      required: true
+      default: false
+      selector:
+        boolean:
+
+disarm_part:
+  name: Снять раздел с охраны
+  description: Снять один раздел ARM с охраны. Требуется явное подтверждение.
+  fields:
+    pku:
+      name: ПКУ
+      description: Номер пульта управления.
+      required: true
+      example: 16
+      selector:
+        number:
+          min: 1
+          mode: box
+    part:
+      name: Раздел
+      description: Номер раздела на выбранном ПКУ.
+      required: true
+      example: 4
+      selector:
+        number:
+          min: 1
+          mode: box
+    confirm:
+      name: Подтверждение
+      description: Должно быть true для отправки команды.
+      required: true
+      default: false
+      selector:
+        boolean:

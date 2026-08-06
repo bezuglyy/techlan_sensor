@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.HA_VERSION
+.storage/
+secrets.yaml
+*.log

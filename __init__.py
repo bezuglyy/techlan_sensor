@@ -1,73 +1,138 @@
-"""Native Home Assistant integration for Techlan ARM-OPS."""
+"""Native Home Assistant integration for Techlan Sensor (read-only domain).
+
+Управление разделами (arm/disarm) намеренно отсутствует: оно живёт только
+в интеграции ``techlan_ops``. Здесь — только сенсоры состояния/климата и
+number-сущности для калибровки (scale/offset/порогов), которые сохраняются в
+options через существующий OptionsFlow.
+"""
 
 from __future__ import annotations
 
-import voluptuous as vol
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, HomeAssistantError, ServiceCall
+import logging
 
-from .const import CONFIRM, DOMAIN, PLATFORMS
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+
+from ._shared.shared_entities import async_get_or_create_device, configuration_url
+from .const import (
+    CONF_BASE_URL,
+    CONF_HUMIDITY_LOOPS,
+    CONF_HUMIDITY_OFFSET,
+    CONF_HUMIDITY_SCALE,
+    CONF_SCAN_INTERVAL,
+    CONF_SELECTED_LOOPS,
+    CONF_TEMPERATURE_ALARM_HIGH,
+    CONF_TEMPERATURE_ALARM_LOW,
+    CONF_TEMPERATURE_LOOPS,
+    CONF_TEMPERATURE_OFFSET,
+    CONF_TEMPERATURE_SCALE,
+    CONF_WS_PATH,
+    CONFIG_MINOR_VERSION,
+    DEFAULT_HUMIDITY_OFFSET,
+    DEFAULT_HUMIDITY_SCALE,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_TEMPERATURE_ALARM_HIGH,
+    DEFAULT_TEMPERATURE_ALARM_LOW,
+    DEFAULT_TEMPERATURE_OFFSET,
+    DEFAULT_TEMPERATURE_SCALE,
+    DEFAULT_WS_PATH,
+    DEVICE_MODEL,
+    DEVICE_NAME,
+    DOMAIN,
+    INTEGRATION_VERSION,
+    PARENT_IDENTIFIER,
+    PLATFORMS,
+)
 from .coordinator import TechlanDataUpdateCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 type TechlanConfigEntry = ConfigEntry[TechlanDataUpdateCoordinator]
 
-
-def _register_services(hass: HomeAssistant) -> None:
-    """Register control services once for the integration domain."""
-    if hass.services.has_service(DOMAIN, "arm_part"):
-        return
-
-    schema = vol.Schema({
-        vol.Required("pku", description="Номер ПКУ"): vol.Coerce(int),
-        vol.Required("part", description="Номер раздела"): vol.Coerce(int),
-        vol.Required(CONFIRM, default=False, description="Подтверждение команды"): vol.Coerce(bool),
-    })
-
-    async def get_coordinator() -> TechlanDataUpdateCoordinator:
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            runtime_data = getattr(entry, "runtime_data", None)
-            if runtime_data is not None:
-                return runtime_data
-        raise HomeAssistantError("Интеграция Techlan ARM-OPS ещё не загружена")
-
-    async def handle_arm(call: ServiceCall) -> None:
-        if not call.data[CONFIRM]:
-            raise HomeAssistantError("Для управления требуется confirm: true")
-        coordinator = await get_coordinator()
-        await coordinator.client.async_control_part("arm", call.data["pku"], call.data["part"])
-        await coordinator.async_request_refresh()
-
-    async def handle_disarm(call: ServiceCall) -> None:
-        if not call.data[CONFIRM]:
-            raise HomeAssistantError("Для управления требуется confirm: true")
-        coordinator = await get_coordinator()
-        await coordinator.client.async_control_part("disarm", call.data["pku"], call.data["part"])
-        await coordinator.async_request_refresh()
-
-    hass.services.async_register(DOMAIN, "arm_part", handle_arm, schema)
-    hass.services.async_register(DOMAIN, "disarm_part", handle_disarm, schema)
+# Ключи, добавленные после первой версии схемы (используются миграцией).
+_MIGRATION_DEFAULTS: dict = {
+    CONF_WS_PATH: DEFAULT_WS_PATH,
+    CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+    CONF_SELECTED_LOOPS: [],
+    CONF_TEMPERATURE_LOOPS: [],
+    CONF_TEMPERATURE_SCALE: DEFAULT_TEMPERATURE_SCALE,
+    CONF_TEMPERATURE_OFFSET: DEFAULT_TEMPERATURE_OFFSET,
+    CONF_HUMIDITY_LOOPS: [],
+    CONF_HUMIDITY_SCALE: DEFAULT_HUMIDITY_SCALE,
+    CONF_HUMIDITY_OFFSET: DEFAULT_HUMIDITY_OFFSET,
+    CONF_TEMPERATURE_ALARM_LOW: DEFAULT_TEMPERATURE_ALARM_LOW,
+    CONF_TEMPERATURE_ALARM_HIGH: DEFAULT_TEMPERATURE_ALARM_HIGH,
+}
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up the Techlan ARM-OPS integration."""
+    """Set up the Techlan Sensor integration."""
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: TechlanConfigEntry) -> bool:
+    """Migrate config entry schema (options get new keys with defaults)."""
+    if entry.version > 1:
+        # Unknown future schema — do not touch it.
+        return False
+    if entry.version == 1 and entry.minor_version < CONFIG_MINOR_VERSION:
+        options = dict(entry.options)
+        merged = {**entry.data, **entry.options}
+        for key, default in _MIGRATION_DEFAULTS.items():
+            if key not in merged:
+                options[key] = default
+        hass.config_entries.async_update_entry(
+            entry, options=options, minor_version=CONFIG_MINOR_VERSION
+        )
+        _LOGGER.info(
+            "Techlan Sensor migrated to minor version %s", CONFIG_MINOR_VERSION
+        )
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: TechlanConfigEntry) -> bool:
-    """Set up Techlan ARM-OPS from a config entry."""
+    """Set up Techlan Sensor from a config entry."""
     coordinator = TechlanDataUpdateCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    entry.async_on_unload(coordinator.async_shutdown)
+    _register_parent_device(hass, entry, coordinator)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
-async def _async_update_listener(hass: HomeAssistant, entry: TechlanConfigEntry) -> None:
+def _register_parent_device(
+    hass: HomeAssistant,
+    entry: TechlanConfigEntry,
+    coordinator: TechlanDataUpdateCoordinator,
+) -> None:
+    """Create the parent device before entities so via_device_id resolves."""
+    base_url = {**entry.data, **entry.options}.get(CONF_BASE_URL, "")
+    coordinator.parent_identifier = (DOMAIN, PARENT_IDENTIFIER)
+    coordinator.configuration_url = configuration_url(base_url)
+    parent = async_get_or_create_device(
+        hass,
+        entry,
+        {coordinator.parent_identifier},
+        name=DEVICE_NAME,
+        model=DEVICE_MODEL,
+        sw_version=INTEGRATION_VERSION,
+        configuration_url=coordinator.configuration_url,
+    )
+    coordinator.parent_device_id = parent.id
+
+
+async def _async_update_listener(
+    hass: HomeAssistant, entry: TechlanConfigEntry
+) -> None:
     """Reload the coordinator/entities after connection options change."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: TechlanConfigEntry) -> bool:
-    """Unload Techlan ARM-OPS."""
+    """Unload Techlan Sensor and close the persistent connection."""
+    coordinator = getattr(entry, "runtime_data", None)
+    if coordinator is not None:
+        await coordinator.async_shutdown()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

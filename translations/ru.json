@@ -20,7 +20,16 @@
           "temperature_offset": "Смещение температуры, °C",
           "humidity_loops": "ШС влажности",
           "humidity_scale": "Коэффициент влажности",
-          "humidity_offset": "Смещение влажности, %"
+          "humidity_offset": "Смещение влажности, %",
+          "temperature_alarm_low": "Порог тревоги: температура ниже, °C",
+          "temperature_alarm_high": "Порог тревоги: температура выше, °C"
+        }
+      },
+      "select_pkus": {
+        "title": "Выбор пультов (ПКУ)",
+        "description": "Отметьте пульты, чьи шлейфы показать на следующем шаге (можно выбрать несколько или пропустить — тогда будут все).",
+        "data": {
+          "pkus": "Пульты (ПКУ)"
         }
       }
     }
@@ -29,7 +38,7 @@
     "step": {
       "init": {
         "title": "Настройки подключения ARM",
-        "description": "Изменение адреса, портов и интервала опроса. Пароль оставьте пустым, чтобы сохранить текущий.",
+        "description": "Изменение адреса, портов и интервала опроса. Пароль оставьте пустым, чтобы сохранить текущий. Выберите ПКУ — их шлейфы появятся на следующем шаге.",
         "data": {
           "base_url": "Адрес ARM Web",
           "arm_id": "Идентификатор АРМ",
@@ -42,15 +51,64 @@
           "temperature_offset": "Смещение температуры, °C",
           "humidity_loops": "ШС влажности",
           "humidity_scale": "Коэффициент влажности",
-          "humidity_offset": "Смещение влажности, %"
+          "humidity_offset": "Смещение влажности, %",
+          "pkus": "Пульты (ПКУ) для показа шлейфов"
+        }
+      },
+      "loops": {
+        "title": "Выбор шлейфов",
+        "description": "Выберите шлейфы для опроса (показаны только шлейфы выбранных ПКУ). Температурные ШС будут созданы как датчики температуры.",
+        "data": {
+          "selected_loops": "Шлейфы для опроса",
+          "temperature_loops": "Температурные ШС",
+          "temperature_scale": "Коэффициент температуры",
+          "temperature_offset": "Смещение температуры, °C",
+          "humidity_loops": "ШС влажности",
+          "humidity_scale": "Коэффициент влажности",
+          "humidity_offset": "Смещение влажности, %",
+          "temperature_alarm_low": "Порог тревоги: температура ниже, °C",
+          "temperature_alarm_high": "Порог тревоги: температура выше, °C"
         }
       }
     }
   },
-    "error": {
-      "cannot_connect": "Не удалось подключиться к ARM WebSocket или авторизоваться в ServerSkif"
+  "error": {
+    "cannot_connect": "Не удалось подключиться к ARM WebSocket или авторизоваться в ServerSkif"
+  },
+  "abort": {
+    "already_configured": "Этот адрес ARM уже настроен"
+  },
+  "entity": {
+    "binary_sensor": {
+      "availability": {
+        "name": "Доступность"
+      }
     },
-    "abort": {
-      "already_configured": "Этот адрес ARM уже настроен"
+    "number": {
+      "temperature_scale": {
+        "name": "Калибровка: температура × scale"
+      },
+      "temperature_offset": {
+        "name": "Калибровка: температура + offset"
+      },
+      "humidity_scale": {
+        "name": "Калибровка: влажность × scale"
+      },
+      "humidity_offset": {
+        "name": "Калибровка: влажность + offset"
+      },
+      "temperature_alarm_low": {
+        "name": "Порог тревоги: температура ниже"
+      },
+      "temperature_alarm_high": {
+        "name": "Порог тревоги: температура выше"
+      }
     }
+  },
+  "issues": {
+    "arm_unreachable": {
+      "title": "ARM-OPS недоступен",
+      "description": "Не удалось получить данные от ARM-OPS/ServerSkif: {error}. Проверьте Core (HTTP 18081 / HTTPS 8443) и службы ARM-OPS."
+    }
+  }
 }

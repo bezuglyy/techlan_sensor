@@ -1,16 +1,22 @@
 # Techlan Sensor
 ![Release](https://img.shields.io/github/v/release/bezuglyy/techlan_sensor?label=Release&style=flat-square) ![HACS](https://img.shields.io/badge/HACS-Custom%20Repository-purple?style=flat-square) ![License](https://img.shields.io/github/license/bezuglyy/techlan_sensor?style=flat-square) ![HA](https://img.shields.io/badge/HA-2025.1%2B-2ea44f?style=flat-square)
-Кастомная интеграция для [Home Assistant](https://www.home-assistant.io) · версия **0.3.0**.
-![icon](custom_components/techlan_sensor/brand/icon.png)
+Кастомная интеграция для [Home Assistant](https://www.home-assistant.io) · версия **0.5.0**.
+![icon](brand/icon.png)
 | | |
 |---|---|
 | Домен | `techlan_sensor` |
-| Версия | 0.3.0 |
+| Версия | 0.5.0 |
 | Тип | custom integration |
 ## Описание
 Сенсоры шлейфов охранной системы ServerSkif (Techlan).
 ### Возможности
 - Полная настройка через UI (config flow)
+### Изменения 0.5.0
+- **Только чтение климата** — интеграция больше не содержит управляющих сервисов/кнопок (управление ОПС — в `techlan_ops`).
+- **`number`-сущности:** `temperature_scale`/`offset`, `humidity_scale`/`offset`, `temperature_alarm_low`/`high`.
+- Климат считается как `(temperature|adc) × scale + offset`; тревога по температуре — по коду 206 и порогам.
+- **Постоянное read-only WebSocket-соединение** с реконнектом.
+- **Диагностика**, **Repairs**, enum-классы, миграция схемы; **фирменный брендинг** (светлая/тёмная тема).
 ### Установка
 1. Скопируйте папку `custom_components/techlan_sensor/` в каталог `custom_components/` конфигурации Home Assistant.
 2. Перезапустите Home Assistant.

@@ -1,9 +1,8 @@
-"""Config flow for native Techlan ARM-OPS integration."""
+"""Config flow for native Techlan Sensor integration."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from urllib.parse import urlparse
+import time
 
 import voluptuous as vol
 from homeassistant import config_entries
@@ -11,21 +10,167 @@ from homeassistant.helpers import selector
 from homeassistant.core import HomeAssistant
 
 from .api import TechlanApiClient, TechlanApiError
-from .const import CONF_ARM_ID, CONF_BASE_URL, CONF_HUMIDITY_LOOPS, CONF_HUMIDITY_OFFSET, CONF_HUMIDITY_SCALE, CONF_PASSWORD, CONF_SCAN_INTERVAL, CONF_SELECTED_LOOPS, CONF_TEMPERATURE_LOOPS, CONF_TEMPERATURE_OFFSET, CONF_TEMPERATURE_SCALE, CONF_WS_PATH, DEFAULT_ARM_ID, DEFAULT_BASE_URL, DEFAULT_HUMIDITY_OFFSET, DEFAULT_HUMIDITY_SCALE, DEFAULT_SCAN_INTERVAL, DEFAULT_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_SCALE, DEFAULT_WS_PATH, DOMAIN
+from ._shared.shared_api import CannotConnectError, url_is_valid
+from .const import (
+    CONF_ARM_ID,
+    CONF_BASE_URL,
+    CONF_HUMIDITY_LOOPS,
+    CONF_HUMIDITY_OFFSET,
+    CONF_HUMIDITY_SCALE,
+    CONF_PASSWORD,
+    CONF_SCAN_INTERVAL,
+    CONF_SELECTED_LOOPS,
+    CONF_TEMPERATURE_ALARM_HIGH,
+    CONF_TEMPERATURE_ALARM_LOW,
+    CONF_TEMPERATURE_LOOPS,
+    CONF_TEMPERATURE_OFFSET,
+    CONF_TEMPERATURE_SCALE,
+    CONF_WS_PATH,
+    CONFIG_MINOR_VERSION,
+    DEFAULT_ARM_ID,
+    DEFAULT_BASE_URL,
+    DEFAULT_HUMIDITY_OFFSET,
+    DEFAULT_HUMIDITY_SCALE,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_TEMPERATURE_ALARM_HIGH,
+    DEFAULT_TEMPERATURE_ALARM_LOW,
+    DEFAULT_TEMPERATURE_OFFSET,
+    DEFAULT_TEMPERATURE_SCALE,
+    DEFAULT_WS_PATH,
+    DOMAIN,
+)
+
+# Discovery of every loop (ШС) across all PKUs takes several seconds and
+# returns thousands of entries. Cache the result briefly so that re-rendering
+# the form (and switching between flow steps) is instant.
+_LOOPS_CACHE: dict[str, tuple[float, list]] = {}
+_LOOPS_TTL = 600
 
 
-@dataclass(frozen=True)
-class CannotConnectError(Exception):
-    """Unable to validate ARM connection."""
+async def _discover_loops_cached(data: dict) -> list:
+    """Return the discovered loops, reusing a recent result when possible."""
+    key = "|".join(
+        [
+            str(data.get(CONF_BASE_URL, "")),
+            str(data.get(CONF_ARM_ID, "")),
+            str(data.get(CONF_PASSWORD, "")),
+            str(data.get(CONF_WS_PATH, DEFAULT_WS_PATH)),
+        ]
+    )
+    now = time.monotonic()
+    hit = _LOOPS_CACHE.get(key)
+    if hit and (now - hit[0]) < _LOOPS_TTL:
+        return hit[1]
+    client = TechlanApiClient(
+        data[CONF_BASE_URL].rstrip("/"),
+        data[CONF_ARM_ID],
+        data[CONF_PASSWORD],
+        data.get(CONF_WS_PATH, DEFAULT_WS_PATH),
+    )
+    loops = await client.async_discover_loops()
+    _LOOPS_CACHE[key] = (now, loops)
+    return loops
+
+
+def _pku_select_options(loops: list) -> list[dict]:
+    """Build the PKU picker options (with loop counts) from discovered loops."""
+    counts: dict[int, int] = {}
+    for item in loops:
+        pku = int(item["pku"])
+        counts[pku] = counts.get(pku, 0) + 1
+    return [
+        {"value": str(pku), "label": f"ПКУ {pku} — шлейфов: {counts[pku]}"}
+        for pku in sorted(counts)
+    ]
+
+
+def _filter_loops(loops: list, pkus: list[str] | None) -> list:
+    """Keep only loops belonging to the selected PKUs (empty = all)."""
+    if not pkus:
+        return loops
+    wanted = {int(p) for p in pkus}
+    return [item for item in loops if int(item["pku"]) in wanted]
+
+
+def _loop_options(loops: list) -> list[dict]:
+    return [{"value": item["key"], "label": item["label"]} for item in loops]
+
+
+def _pkus_from_loop_keys(keys: list[str]) -> list[str]:
+    """Derive the PKU numbers from stored loop keys like '24:26:612'."""
+    result: set[str] = set()
+    for key in keys or []:
+        parts = str(key).split(":")
+        if len(parts) == 3:
+            result.add(parts[0])
+    return sorted(result)
+
+
+def _select(options: list[dict], default: list[str] | None = None):
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=options,
+            multiple=True,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
+def _loop_schema(
+    loops: list,
+    selected: list[str] | None = None,
+    temperature_selected: list[str] | None = None,
+    humidity_selected: list[str] | None = None,
+    temperature_scale: float = DEFAULT_TEMPERATURE_SCALE,
+    temperature_offset: float = DEFAULT_TEMPERATURE_OFFSET,
+    humidity_scale: float = DEFAULT_HUMIDITY_SCALE,
+    humidity_offset: float = DEFAULT_HUMIDITY_OFFSET,
+    temperature_alarm_low: float = DEFAULT_TEMPERATURE_ALARM_LOW,
+    temperature_alarm_high: float = DEFAULT_TEMPERATURE_ALARM_HIGH,
+):
+    options = _loop_options(loops)
+    return vol.Schema(
+        {
+            vol.Optional(CONF_SELECTED_LOOPS, default=selected or []): _select(options),
+            vol.Optional(
+                CONF_TEMPERATURE_LOOPS, default=temperature_selected or []
+            ): _select(options),
+            vol.Required(
+                CONF_TEMPERATURE_SCALE, default=float(temperature_scale)
+            ): vol.Coerce(float),
+            vol.Required(
+                CONF_TEMPERATURE_OFFSET, default=float(temperature_offset)
+            ): vol.Coerce(float),
+            vol.Required(
+                CONF_TEMPERATURE_ALARM_LOW, default=float(temperature_alarm_low)
+            ): vol.Coerce(float),
+            vol.Required(
+                CONF_TEMPERATURE_ALARM_HIGH, default=float(temperature_alarm_high)
+            ): vol.Coerce(float),
+            vol.Optional(CONF_HUMIDITY_LOOPS, default=humidity_selected or []): _select(
+                options
+            ),
+            vol.Required(
+                CONF_HUMIDITY_SCALE, default=float(humidity_scale)
+            ): vol.Coerce(float),
+            vol.Required(
+                CONF_HUMIDITY_OFFSET, default=float(humidity_offset)
+            ): vol.Coerce(float),
+        }
+    )
 
 
 async def _validate(hass: HomeAssistant, data: dict[str, str]) -> None:
-    parsed = urlparse(str(data.get(CONF_BASE_URL, "")).rstrip("/"))
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if not url_is_valid(
+        data.get(CONF_BASE_URL, ""), data.get(CONF_WS_PATH, DEFAULT_WS_PATH)
+    ):
         raise CannotConnectError
-    if not str(data.get(CONF_WS_PATH, DEFAULT_WS_PATH)).startswith("/"):
-        raise CannotConnectError
-    client = TechlanApiClient(data[CONF_BASE_URL].rstrip("/"), data[CONF_ARM_ID], data[CONF_PASSWORD], data.get(CONF_WS_PATH, DEFAULT_WS_PATH))
+    client = TechlanApiClient(
+        data[CONF_BASE_URL].rstrip("/"),
+        data[CONF_ARM_ID],
+        data[CONF_PASSWORD],
+        data.get(CONF_WS_PATH, DEFAULT_WS_PATH),
+    )
     try:
         await client.async_validate()
     except TechlanApiError as exc:
@@ -36,26 +181,11 @@ class TechlanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle setup from Home Assistant UI."""
 
     VERSION = 1
+    MINOR_VERSION = CONFIG_MINOR_VERSION
 
-    async def _loop_schema(self, data: dict, selected: list[str] | None = None, temperature_selected: list[str] | None = None, humidity_selected: list[str] | None = None):
-        client = TechlanApiClient(data[CONF_BASE_URL], data[CONF_ARM_ID], data[CONF_PASSWORD], data.get(CONF_WS_PATH, DEFAULT_WS_PATH))
-        loops = await client.async_discover_loops()
-        options = [{"value": item["key"], "label": item["label"]} for item in loops]
-        return vol.Schema({
-            vol.Optional(CONF_SELECTED_LOOPS, default=selected or []): selector.SelectSelector(selector.SelectSelectorConfig(options=options, multiple=True, mode=selector.SelectSelectorMode.DROPDOWN)),
-            vol.Optional(CONF_TEMPERATURE_LOOPS, default=temperature_selected or []): selector.SelectSelector(selector.SelectSelectorConfig(options=options, multiple=True, mode=selector.SelectSelectorMode.DROPDOWN)),
-            vol.Required(CONF_TEMPERATURE_SCALE, default=DEFAULT_TEMPERATURE_SCALE): vol.Coerce(float),
-            vol.Required(CONF_TEMPERATURE_OFFSET, default=DEFAULT_TEMPERATURE_OFFSET): vol.Coerce(float),
-            vol.Optional(CONF_HUMIDITY_LOOPS, default=humidity_selected or []): selector.SelectSelector(selector.SelectSelectorConfig(options=options, multiple=True, mode=selector.SelectSelectorMode.DROPDOWN)),
-            vol.Required(CONF_HUMIDITY_SCALE, default=DEFAULT_HUMIDITY_SCALE): vol.Coerce(float),
-            vol.Required(CONF_HUMIDITY_OFFSET, default=DEFAULT_HUMIDITY_OFFSET): vol.Coerce(float),
-        })
-
-    @staticmethod
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
-        return TechlanOptionsFlow()
-
-    async def async_step_user(self, user_input: dict | None = None) -> config_entries.ConfigFlowResult:
+    async def async_step_user(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             data = {
@@ -71,7 +201,7 @@ class TechlanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             else:
                 self._pending_data = data
-                return await self.async_step_select_loops()
+                return await self.async_step_select_pkus()
 
         schema = vol.Schema(
             {
@@ -82,8 +212,33 @@ class TechlanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
-    async def async_step_select_loops(self, user_input: dict | None = None) -> config_entries.ConfigFlowResult:
+    async def async_step_select_pkus(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
         data = self._pending_data
+        try:
+            loops = await _discover_loops_cached(data)
+        except TechlanApiError:
+            return self.async_abort(reason="cannot_connect")
+        if user_input is not None:
+            self._pending_pkus = list(user_input.get("pkus", []))
+            return await self.async_step_select_loops()
+        schema = vol.Schema(
+            {
+                vol.Optional("pkus", default=[]): _select(_pku_select_options(loops)),
+            }
+        )
+        return self.async_show_form(step_id="select_pkus", data_schema=schema)
+
+    async def async_step_select_loops(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
+        data = self._pending_data
+        pkus = getattr(self, "_pending_pkus", [])
+        try:
+            loops = _filter_loops(await _discover_loops_cached(data), pkus)
+        except TechlanApiError:
+            return self.async_abort(reason="cannot_connect")
         if user_input is not None:
             selected = set(user_input.get(CONF_SELECTED_LOOPS, []))
             temperature_selected = list(user_input.get(CONF_TEMPERATURE_LOOPS, []))
@@ -92,93 +247,209 @@ class TechlanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             selected.update(humidity_selected)
             data[CONF_SELECTED_LOOPS] = sorted(selected)
             data[CONF_TEMPERATURE_LOOPS] = temperature_selected
-            data[CONF_TEMPERATURE_SCALE] = float(user_input.get(CONF_TEMPERATURE_SCALE, DEFAULT_TEMPERATURE_SCALE))
-            data[CONF_TEMPERATURE_OFFSET] = float(user_input.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET))
+            data[CONF_TEMPERATURE_SCALE] = float(
+                user_input.get(CONF_TEMPERATURE_SCALE, DEFAULT_TEMPERATURE_SCALE)
+            )
+            data[CONF_TEMPERATURE_OFFSET] = float(
+                user_input.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET)
+            )
             data[CONF_HUMIDITY_LOOPS] = humidity_selected
-            data[CONF_HUMIDITY_SCALE] = float(user_input.get(CONF_HUMIDITY_SCALE, DEFAULT_HUMIDITY_SCALE))
-            data[CONF_HUMIDITY_OFFSET] = float(user_input.get(CONF_HUMIDITY_OFFSET, DEFAULT_HUMIDITY_OFFSET))
+            data[CONF_HUMIDITY_SCALE] = float(
+                user_input.get(CONF_HUMIDITY_SCALE, DEFAULT_HUMIDITY_SCALE)
+            )
+            data[CONF_HUMIDITY_OFFSET] = float(
+                user_input.get(CONF_HUMIDITY_OFFSET, DEFAULT_HUMIDITY_OFFSET)
+            )
+            data[CONF_TEMPERATURE_ALARM_LOW] = float(
+                user_input.get(
+                    CONF_TEMPERATURE_ALARM_LOW, DEFAULT_TEMPERATURE_ALARM_LOW
+                )
+            )
+            data[CONF_TEMPERATURE_ALARM_HIGH] = float(
+                user_input.get(
+                    CONF_TEMPERATURE_ALARM_HIGH, DEFAULT_TEMPERATURE_ALARM_HIGH
+                )
+            )
             return self.async_create_entry(title="Techlan Sensor", data=data)
-        try:
-            schema = await self._loop_schema(data)
-        except TechlanApiError:
-            return self.async_abort(reason="cannot_connect")
+        schema = _loop_schema(loops)
         return self.async_show_form(step_id="select_loops", data_schema=schema)
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        return TechlanOptionsFlow()
 
 
 class TechlanOptionsFlow(config_entries.OptionsFlow):
-    """Allow changing ARM connection parameters after setup."""
+    """Allow changing ARM connection parameters after setup.
 
-    async def _loop_schema(self, data: dict, selected: list[str] | None = None, temperature_selected: list[str] | None = None, humidity_selected: list[str] | None = None):
-        client = TechlanApiClient(data[CONF_BASE_URL], data[CONF_ARM_ID], data[CONF_PASSWORD], data.get(CONF_WS_PATH, DEFAULT_WS_PATH))
-        loops = await client.async_discover_loops()
-        options = [{"value": item["key"], "label": item["label"]} for item in loops]
-        return vol.Schema({
-            vol.Optional(CONF_SELECTED_LOOPS, default=selected or []): selector.SelectSelector(selector.SelectSelectorConfig(options=options, multiple=True, mode=selector.SelectSelectorMode.DROPDOWN)),
-            vol.Optional(CONF_TEMPERATURE_LOOPS, default=temperature_selected or []): selector.SelectSelector(selector.SelectSelectorConfig(options=options, multiple=True, mode=selector.SelectSelectorMode.DROPDOWN)),
-            vol.Required(CONF_TEMPERATURE_SCALE, default=float(data.get(CONF_TEMPERATURE_SCALE, DEFAULT_TEMPERATURE_SCALE))): vol.Coerce(float),
-            vol.Required(CONF_TEMPERATURE_OFFSET, default=float(data.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET))): vol.Coerce(float),
-            vol.Optional(CONF_HUMIDITY_LOOPS, default=humidity_selected or []): selector.SelectSelector(selector.SelectSelectorConfig(options=options, multiple=True, mode=selector.SelectSelectorMode.DROPDOWN)),
-            vol.Required(CONF_HUMIDITY_SCALE, default=float(data.get(CONF_HUMIDITY_SCALE, DEFAULT_HUMIDITY_SCALE))): vol.Coerce(float),
-            vol.Required(CONF_HUMIDITY_OFFSET, default=float(data.get(CONF_HUMIDITY_OFFSET, DEFAULT_HUMIDITY_OFFSET))): vol.Coerce(float),
-        })
+    The loop picker is split into two steps (PKU filter -> loops) because the
+    full list holds thousands of entries and the browser cannot render it.
+    """
 
-    async def async_step_init(self, user_input: dict | None = None) -> config_entries.ConfigFlowResult:
+    async def async_step_init(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
         errors: dict[str, str] = {}
         current = {**self.config_entry.data, **self.config_entry.options}
+        try:
+            loops = await _discover_loops_cached(current)
+        except TechlanApiError:
+            loops = []
+
         if user_input is not None:
-            selected = set(user_input.get(CONF_SELECTED_LOOPS, current.get(CONF_SELECTED_LOOPS, [])))
-            temperature_selected = list(user_input.get(CONF_TEMPERATURE_LOOPS, current.get(CONF_TEMPERATURE_LOOPS, [])))
-            humidity_selected = list(user_input.get(CONF_HUMIDITY_LOOPS, current.get(CONF_HUMIDITY_LOOPS, [])))
-            selected.update(temperature_selected)
-            selected.update(humidity_selected)
-            data = {
+            pending = {
                 CONF_BASE_URL: user_input[CONF_BASE_URL].rstrip("/"),
                 CONF_ARM_ID: user_input[CONF_ARM_ID].strip(),
-                CONF_PASSWORD: user_input[CONF_PASSWORD] or current.get(CONF_PASSWORD, ""),
+                CONF_PASSWORD: user_input[CONF_PASSWORD]
+                or current.get(CONF_PASSWORD, ""),
                 CONF_WS_PATH: "/" + user_input[CONF_WS_PATH].lstrip("/"),
                 CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
-                CONF_SELECTED_LOOPS: sorted(selected),
-                CONF_TEMPERATURE_LOOPS: temperature_selected,
-                CONF_TEMPERATURE_SCALE: float(user_input.get(CONF_TEMPERATURE_SCALE, current.get(CONF_TEMPERATURE_SCALE, DEFAULT_TEMPERATURE_SCALE))),
-                CONF_TEMPERATURE_OFFSET: float(user_input.get(CONF_TEMPERATURE_OFFSET, current.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET))),
-                CONF_HUMIDITY_LOOPS: humidity_selected,
-                CONF_HUMIDITY_SCALE: float(user_input.get(CONF_HUMIDITY_SCALE, current.get(CONF_HUMIDITY_SCALE, DEFAULT_HUMIDITY_SCALE))),
-                CONF_HUMIDITY_OFFSET: float(user_input.get(CONF_HUMIDITY_OFFSET, current.get(CONF_HUMIDITY_OFFSET, DEFAULT_HUMIDITY_OFFSET))),
             }
-            try:
-                if data[CONF_SCAN_INTERVAL] < 5 or data[CONF_SCAN_INTERVAL] > 3600:
-                    raise CannotConnectError
-                await _validate(self.hass, data)
-            except (CannotConnectError, ValueError, TypeError):
+            if pending[CONF_SCAN_INTERVAL] < 5 or pending[CONF_SCAN_INTERVAL] > 3600:
                 errors["base"] = "cannot_connect"
             else:
-                # The return value of an OptionsFlow is what Home Assistant
-                # persists into entry.options. Updating the entry manually
-                # and then returning an empty result caused HA to overwrite
-                # the selected loops with {}.
-                return self.async_create_entry(
-                    title="",
-                    data={
-                        CONF_BASE_URL: data[CONF_BASE_URL],
-                        CONF_ARM_ID: data[CONF_ARM_ID],
-                        CONF_PASSWORD: data[CONF_PASSWORD],
-                        CONF_WS_PATH: data[CONF_WS_PATH],
-                        CONF_SCAN_INTERVAL: data[CONF_SCAN_INTERVAL],
-                        CONF_SELECTED_LOOPS: data[CONF_SELECTED_LOOPS],
-                    },
-                )
+                try:
+                    await _validate(self.hass, pending)
+                except (CannotConnectError, ValueError, TypeError):
+                    errors["base"] = "cannot_connect"
+                else:
+                    self._pending = {**current, **pending}
+                    self._pending_pkus = list(user_input.get("pkus", []))
+                    return await self.async_step_loops()
 
-        try:
-            loop_schema = await self._loop_schema(current, current.get(CONF_SELECTED_LOOPS, []), current.get(CONF_TEMPERATURE_LOOPS, []), current.get(CONF_HUMIDITY_LOOPS, []))
-            loop_field = loop_schema.schema
-        except TechlanApiError:
-            loop_field = {vol.Optional(CONF_SELECTED_LOOPS, default=current.get(CONF_SELECTED_LOOPS, [])): selector.SelectSelector(selector.SelectSelectorConfig(options=[], multiple=True))}
-        schema = vol.Schema({
-            vol.Required(CONF_BASE_URL, default=current.get(CONF_BASE_URL, DEFAULT_BASE_URL)): str,
-            vol.Required(CONF_ARM_ID, default=current.get(CONF_ARM_ID, DEFAULT_ARM_ID)): str,
-            vol.Optional(CONF_PASSWORD, default=""): selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)),
-            vol.Required(CONF_WS_PATH, default=current.get(CONF_WS_PATH, DEFAULT_WS_PATH)): str,
-            vol.Required(CONF_SCAN_INTERVAL, default=int(current.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
-            **loop_field,
-        })
+        default_pkus = _pkus_from_loop_keys(current.get(CONF_SELECTED_LOOPS, []))
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_BASE_URL, default=current.get(CONF_BASE_URL, DEFAULT_BASE_URL)
+                ): str,
+                vol.Required(
+                    CONF_ARM_ID, default=current.get(CONF_ARM_ID, DEFAULT_ARM_ID)
+                ): str,
+                vol.Optional(CONF_PASSWORD, default=""): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+                ),
+                vol.Required(
+                    CONF_WS_PATH, default=current.get(CONF_WS_PATH, DEFAULT_WS_PATH)
+                ): str,
+                vol.Required(
+                    CONF_SCAN_INTERVAL,
+                    default=int(current.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
+                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
+                vol.Optional("pkus", default=default_pkus): _select(
+                    _pku_select_options(loops)
+                ),
+            }
+        )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
+
+    async def async_step_loops(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
+        current = getattr(self, "_pending", None) or {
+            **self.config_entry.data,
+            **self.config_entry.options,
+        }
+        pkus = getattr(self, "_pending_pkus", None)
+        if pkus is None:
+            pkus = _pkus_from_loop_keys(current.get(CONF_SELECTED_LOOPS, []))
+        try:
+            loops = _filter_loops(await _discover_loops_cached(current), pkus)
+        except TechlanApiError:
+            loops = []
+
+        if user_input is not None:
+            selected = set(
+                user_input.get(
+                    CONF_SELECTED_LOOPS, current.get(CONF_SELECTED_LOOPS, [])
+                )
+            )
+            temperature_selected = list(
+                user_input.get(
+                    CONF_TEMPERATURE_LOOPS, current.get(CONF_TEMPERATURE_LOOPS, [])
+                )
+            )
+            humidity_selected = list(
+                user_input.get(
+                    CONF_HUMIDITY_LOOPS, current.get(CONF_HUMIDITY_LOOPS, [])
+                )
+            )
+            selected.update(temperature_selected)
+            selected.update(humidity_selected)
+            # The return value of an OptionsFlow is what Home Assistant
+            # persists into entry.options.
+            return self.async_create_entry(
+                title="",
+                data={
+                    CONF_BASE_URL: current[CONF_BASE_URL],
+                    CONF_ARM_ID: current[CONF_ARM_ID],
+                    CONF_PASSWORD: current[CONF_PASSWORD],
+                    CONF_WS_PATH: current[CONF_WS_PATH],
+                    CONF_SCAN_INTERVAL: current[CONF_SCAN_INTERVAL],
+                    CONF_SELECTED_LOOPS: sorted(selected),
+                    CONF_TEMPERATURE_LOOPS: temperature_selected,
+                    CONF_TEMPERATURE_SCALE: float(
+                        user_input.get(
+                            CONF_TEMPERATURE_SCALE,
+                            current.get(
+                                CONF_TEMPERATURE_SCALE, DEFAULT_TEMPERATURE_SCALE
+                            ),
+                        )
+                    ),
+                    CONF_TEMPERATURE_OFFSET: float(
+                        user_input.get(
+                            CONF_TEMPERATURE_OFFSET,
+                            current.get(
+                                CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
+                            ),
+                        )
+                    ),
+                    CONF_HUMIDITY_LOOPS: humidity_selected,
+                    CONF_HUMIDITY_SCALE: float(
+                        user_input.get(
+                            CONF_HUMIDITY_SCALE,
+                            current.get(CONF_HUMIDITY_SCALE, DEFAULT_HUMIDITY_SCALE),
+                        )
+                    ),
+                    CONF_HUMIDITY_OFFSET: float(
+                        user_input.get(
+                            CONF_HUMIDITY_OFFSET,
+                            current.get(CONF_HUMIDITY_OFFSET, DEFAULT_HUMIDITY_OFFSET),
+                        )
+                    ),
+                    CONF_TEMPERATURE_ALARM_LOW: float(
+                        user_input.get(
+                            CONF_TEMPERATURE_ALARM_LOW,
+                            current.get(
+                                CONF_TEMPERATURE_ALARM_LOW,
+                                DEFAULT_TEMPERATURE_ALARM_LOW,
+                            ),
+                        )
+                    ),
+                    CONF_TEMPERATURE_ALARM_HIGH: float(
+                        user_input.get(
+                            CONF_TEMPERATURE_ALARM_HIGH,
+                            current.get(
+                                CONF_TEMPERATURE_ALARM_HIGH,
+                                DEFAULT_TEMPERATURE_ALARM_HIGH,
+                            ),
+                        )
+                    ),
+                },
+            )
+
+        schema = _loop_schema(
+            loops,
+            current.get(CONF_SELECTED_LOOPS, []),
+            current.get(CONF_TEMPERATURE_LOOPS, []),
+            current.get(CONF_HUMIDITY_LOOPS, []),
+            current.get(CONF_TEMPERATURE_SCALE, DEFAULT_TEMPERATURE_SCALE),
+            current.get(CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET),
+            current.get(CONF_HUMIDITY_SCALE, DEFAULT_HUMIDITY_SCALE),
+            current.get(CONF_HUMIDITY_OFFSET, DEFAULT_HUMIDITY_OFFSET),
+            current.get(CONF_TEMPERATURE_ALARM_LOW, DEFAULT_TEMPERATURE_ALARM_LOW),
+            current.get(CONF_TEMPERATURE_ALARM_HIGH, DEFAULT_TEMPERATURE_ALARM_HIGH),
+        )
+        return self.async_show_form(step_id="loops", data_schema=schema)

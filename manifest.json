@@ -1,6 +1,6 @@
 {
   "domain": "techlan_sensor",
-  "name": "Techlan Sensor",
+  "name": "SecurARM Sensor",
   "codeowners": [
     "@techlan"
   ],
@@ -13,5 +13,5 @@
   "requirements": [
     "websocket-client>=1.8.0"
   ],
-  "version": "0.6.0"
+  "version": "0.6.1"
 }

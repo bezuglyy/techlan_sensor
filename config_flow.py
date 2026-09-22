@@ -367,7 +367,7 @@ class TechlanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_TEMPERATURE_ALARM_HIGH, DEFAULT_TEMPERATURE_ALARM_HIGH
                 )
             )
-            return self.async_create_entry(title="Techlan Sensor", data=data)
+            return self.async_create_entry(title="SecurARM Sensor", data=data)
         schema = _loop_schema(loops)
         return self.async_show_form(step_id="select_loops", data_schema=schema)
 

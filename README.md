@@ -1,18 +1,21 @@
-# Techlan Sensor
+# SecurARM Sensor
 ![Release](https://img.shields.io/github/v/release/bezuglyy/techlan_sensor?label=Release&style=flat-square) ![HACS](https://img.shields.io/badge/HACS-Custom%20Repository-purple?style=flat-square) ![License](https://img.shields.io/github/license/bezuglyy/techlan_sensor?style=flat-square) ![HA](https://img.shields.io/badge/HA-2025.1%2B-2ea44f?style=flat-square)
-Кастомная интеграция для [Home Assistant](https://www.home-assistant.io) · версия **0.6.0**.
+Кастомная интеграция для [Home Assistant](https://www.home-assistant.io) · версия **0.6.1**.
 ![icon](brand/icon.png)
 | | |
 |---|---|
 | Домен | `techlan_sensor` |
-| Версия | 0.6.0 |
+| Версия | 0.6.1 |
 | Тип | custom integration |
 ## Описание
-Сенсоры шлейфов охранной системы ServerSkif (Techlan) и **управление реле**.
+Сенсоры шлейфов охранной системы ServerSkif (**SecurARM**) и **управление реле**. Отображаемое имя интеграции — **SecurARM Sensor**; домен `techlan_sensor` и `entity_id` не меняются.
 ### Возможности
 - Полная настройка через UI (config flow)
 - Климат: АЦП шлейфов, температура/влажность с калибровкой (`scale`/`offset`) и порогами тревоги
 - **Реле** (управляемые выходы ServerSkif): состояние, вкл/выкл, переключение, 9 программ, время
+### Изменения 0.6.1
+- 🏷️ **Переименование в SecurARM:** отображаемое имя интеграции и устройства — **SecurARM Sensor**, обновлены логотипы/иконки (`brand/`, вордмарк **SECURARM**).
+- ⚠️ Домен `techlan_sensor`, `unique_id` и все `entity_id` **не изменены** — история и автоматизации сохраняются.
 ### Изменения 0.6.0
 - **Управление реле** (управляемыми выходами ServerSkif). Решение проекта: управление **реле** — здесь,
   управление **разделами** (arm/disarm) — по-прежнему только в `techlan_ops`.
@@ -34,7 +37,7 @@
 ### Установка
 1. Скопируйте папку `custom_components/techlan_sensor/` в каталог `custom_components/` конфигурации Home Assistant.
 2. Перезапустите Home Assistant.
-3. Настройки → Устройства и службы → Добавить интеграцию → **Techlan Sensor**.
+3. Настройки → Устройства и службы → Добавить интеграцию → **SecurARM Sensor**.
 > Установка через HACS: добавьте репозиторий `https://github.com/bezuglyy/techlan_sensor` как Custom repository (категория Integration).
 ---
 ## Description
@@ -43,13 +46,16 @@ ServerSkif (Techlan) security loop sensors and **relay control**.
 - Full configuration via UI (config flow)
 - Climate: loop ADC, temperature/humidity with scale/offset and alarm thresholds
 - **Relays** (ServerSkif controllable outputs): state, on/off, toggle, 9 programs, duration
+### Changes 0.6.1
+- 🏷️ **Renamed to SecurARM:** integration and device display name — **SecurARM Sensor**; brand assets regenerated with the **SECURARM** wordmark.
+- ⚠️ Domain `techlan_sensor`, `unique_id`s and all `entity_id`s are unchanged.
 ### Changes 0.6.0
 - Relay control (5 entities per relay: state sensor, switch, toggle button, program select, duration number).
 - Part control (arm/disarm) remains in `techlan_ops` only.
 ### Installation
 1. Copy the `custom_components/techlan_sensor/` folder into the `custom_components/` directory of your Home Assistant configuration.
 2. Restart Home Assistant.
-3. Settings → Devices & Services → Add Integration → **Techlan Sensor**.
+3. Settings → Devices & Services → Add Integration → **SecurARM Sensor**.
 > HACS: add `https://github.com/bezuglyy/techlan_sensor` as a Custom repository (category Integration).
 ---
 **Автор / Author:**

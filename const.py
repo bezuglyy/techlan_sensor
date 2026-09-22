@@ -56,11 +56,11 @@ PLATFORMS = ["sensor", "binary_sensor", "number", "select", "switch", "button"]
 CONFIG_MINOR_VERSION = 4
 
 # Версия интеграции (синхронизировать с manifest.json).
-INTEGRATION_VERSION = "0.6.0"
+INTEGRATION_VERSION = "0.6.1"
 
 # Идентификатор и параметры родительского устройства.
 # Отличается от techlan_ops ("arm_ops"), чтобы устройства двух интеграций
 # не смешивались.
 PARENT_IDENTIFIER = "arm_sensor"
-DEVICE_NAME = "Techlan Sensor"
+DEVICE_NAME = "SecurARM Sensor"
 DEVICE_MODEL = "ServerSkif WebSocket proxy"

@@ -34,10 +34,12 @@ from .const import (
     DEFAULT_TEMPERATURE_SCALE,
     DEVICE_MODEL,
     DEVICE_NAME,
+    CONF_RELAY_TIME,
     DOMAIN,
     INTEGRATION_VERSION,
 )
 from .coordinator import TechlanDataUpdateCoordinator
+from .relay_base import TechlanRelayEntity, configured_relays
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -125,6 +127,11 @@ async def async_setup_entry(
         TechlanCalibrationNumber(coordinator, entry, definition)
         for definition in CALIBRATION_NUMBERS
     )
+    config = {**entry.data, **entry.options}
+    async_add_entities(
+        TechlanRelayTimeNumber(coordinator, entry, pku, relay)
+        for pku, relay in configured_relays(config)
+    )
 
 
 class TechlanCalibrationNumber(
@@ -175,4 +182,44 @@ class TechlanCalibrationNumber(
         }
         self.hass.config_entries.async_update_entry(self._entry, options=options)
         self.coordinator.update_runtime_options({**self._entry.data, **options})
+        self.async_write_ha_state()
+
+
+class TechlanRelayTimeNumber(
+    CoordinatorEntity[TechlanDataUpdateCoordinator], NumberEntity, TechlanRelayEntity
+):
+    """Время (секунды) для программ реле ``*_time``.
+
+    Значение хранится в options (``CONF_RELAY_TIME`` = ``{"pku:rl": секунды}``)
+    и подставляется в ``controlRelay`` как поле ``time`` (1 единица = 0.125 c).
+    """
+
+    _relay_entity_suffix = "relay_time"
+    _attr_has_entity_name = False
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.BOX
+    _attr_icon = "mdi:timer-outline"
+    _attr_native_min_value = 0.125
+    _attr_native_max_value = 65535 * 0.125
+    _attr_native_step = 0.125
+    _attr_native_unit_of_measurement = "s"
+    _attr_suggested_display_precision = 3
+
+    def __init__(
+        self,
+        coordinator: TechlanDataUpdateCoordinator,
+        entry: ConfigEntry,
+        pku: int,
+        relay: int,
+    ) -> None:
+        super().__init__(coordinator)
+        self._init_relay(coordinator, entry, pku, relay)
+        self._attr_name = f"{self._relay_name()} · время"
+
+    @property
+    def native_value(self) -> float:
+        return self.relay_time
+
+    async def async_set_native_value(self, value: float) -> None:
+        await self._store_option_map(CONF_RELAY_TIME, {self._relay_key: float(value)})
         self.async_write_ha_state()

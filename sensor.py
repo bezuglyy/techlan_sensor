@@ -24,8 +24,10 @@ from .const import (
     DEFAULT_TEMPERATURE_OFFSET,
     DEFAULT_TEMPERATURE_SCALE,
     DOMAIN,
+    RELAY_STATE_NAMES,
 )
 from .coordinator import TechlanDataUpdateCoordinator
+from .relay_base import TechlanRelayEntity, configured_relays
 
 
 def _pku_device_info(coordinator: TechlanDataUpdateCoordinator, pku: int) -> dict:
@@ -80,6 +82,11 @@ async def async_setup_entry(
                         )
                     )
     async_add_entities(entities)
+
+    relay_entities: list = []
+    for pku, relay in configured_relays(config):
+        relay_entities.append(TechlanRelayStateSensor(coordinator, entry, pku, relay))
+    async_add_entities(relay_entities)
 
 
 class TechlanLoopAdcSensor(
@@ -300,4 +307,39 @@ class TechlanHumiditySensor(
             "conversion": "humidity = adc × scale + offset",
             "scale": self._live_scale(),
             "offset": self._live_offset(),
+        }
+
+
+class TechlanRelayStateSensor(
+    CoordinatorEntity[TechlanDataUpdateCoordinator], SensorEntity, TechlanRelayEntity
+):
+    """Состояние реле ServerSkif (Включено / Выключено / Мигает)."""
+
+    _relay_entity_suffix = "relay_state"
+    _attr_has_entity_name = False
+    _attr_icon = "mdi:electric-switch-closed"
+
+    def __init__(
+        self,
+        coordinator: TechlanDataUpdateCoordinator,
+        entry: ConfigEntry,
+        pku: int,
+        relay: int,
+    ) -> None:
+        super().__init__(coordinator)
+        self._init_relay(coordinator, entry, pku, relay)
+        self._attr_name = f"{self._relay_name()} · состояние"
+
+    @property
+    def native_value(self) -> str:
+        state = self._facts.get("state")
+        if state is None:
+            return "неизвестно"
+        return RELAY_STATE_NAMES.get(state, f"код {state}")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            **self._relay_extra(),
+            "description": self._facts.get("description") or "",
         }

@@ -1,9 +1,11 @@
-"""Native Home Assistant integration for Techlan Sensor (read-only domain).
+"""Native Home Assistant integration for Techlan Sensor.
 
-Управление разделами (arm/disarm) намеренно отсутствует: оно живёт только
-в интеграции ``techlan_ops``. Здесь — только сенсоры состояния/климата и
-number-сущности для калибровки (scale/offset/порогов), которые сохраняются в
-options через существующий OptionsFlow.
+Сенсоры состояния/климата (АЦП, температура, влажность), калибровка
+(scale/offset/пороги) и — по решению пользователя от 22.09.2026 — **управление
+реле** (управляемыми выходами ServerSkif): состояние, вкл/выкл, переключение,
+программы (включая мигание и работу по времени), время.
+
+Управление разделами (arm/disarm) по-прежнему живёт только в ``techlan_ops``.
 """
 
 from __future__ import annotations
@@ -19,8 +21,11 @@ from .const import (
     CONF_HUMIDITY_LOOPS,
     CONF_HUMIDITY_OFFSET,
     CONF_HUMIDITY_SCALE,
+    CONF_RELAY_PROGRAM,
+    CONF_RELAY_TIME,
     CONF_SCAN_INTERVAL,
     CONF_SELECTED_LOOPS,
+    CONF_SELECTED_RELAYS,
     CONF_TEMPERATURE_ALARM_HIGH,
     CONF_TEMPERATURE_ALARM_LOW,
     CONF_TEMPERATURE_LOOPS,
@@ -62,6 +67,9 @@ _MIGRATION_DEFAULTS: dict = {
     CONF_HUMIDITY_OFFSET: DEFAULT_HUMIDITY_OFFSET,
     CONF_TEMPERATURE_ALARM_LOW: DEFAULT_TEMPERATURE_ALARM_LOW,
     CONF_TEMPERATURE_ALARM_HIGH: DEFAULT_TEMPERATURE_ALARM_HIGH,
+    CONF_SELECTED_RELAYS: [],
+    CONF_RELAY_TIME: {},
+    CONF_RELAY_PROGRAM: {},
 }
 
 

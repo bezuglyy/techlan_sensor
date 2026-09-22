@@ -18,8 +18,11 @@ from .const import (
     CONF_HUMIDITY_OFFSET,
     CONF_HUMIDITY_SCALE,
     CONF_PASSWORD,
+    CONF_RELAY_PROGRAM,
+    CONF_RELAY_TIME,
     CONF_SCAN_INTERVAL,
     CONF_SELECTED_LOOPS,
+    CONF_SELECTED_RELAYS,
     CONF_TEMPERATURE_ALARM_HIGH,
     CONF_TEMPERATURE_ALARM_LOW,
     CONF_TEMPERATURE_LOOPS,
@@ -70,6 +73,92 @@ async def _discover_loops_cached(data: dict) -> list:
     loops = await client.async_discover_loops()
     _LOOPS_CACHE[key] = (now, loops)
     return loops
+
+
+_RELAYS_CACHE: dict[str, tuple[float, list]] = {}
+_PKUS_CACHE: dict[str, tuple[float, list]] = {}
+
+# Поле фильтра ПКУ на шаге выбора реле (в entry.options не сохраняется).
+RELAY_PKU_FIELD = "relay_pkus"
+_RELAYS_TTL = 600
+
+
+def _client_for(data: dict) -> TechlanApiClient:
+    return TechlanApiClient(
+        data[CONF_BASE_URL].rstrip("/"),
+        data[CONF_ARM_ID],
+        data[CONF_PASSWORD],
+        data.get(CONF_WS_PATH, DEFAULT_WS_PATH),
+    )
+
+
+async def _list_pkus_cached(data: dict) -> list[int]:
+    """Cheap PKU list (single request) for the relay PKU filter."""
+    key = "|".join(
+        [
+            str(data.get(CONF_BASE_URL, "")),
+            str(data.get(CONF_ARM_ID, "")),
+            str(data.get(CONF_PASSWORD, "")),
+            str(data.get(CONF_WS_PATH, DEFAULT_WS_PATH)),
+        ]
+    )
+    now = time.monotonic()
+    hit = _PKUS_CACHE.get(key)
+    if hit and (now - hit[0]) < _RELAYS_TTL:
+        return hit[1]
+    pkus = await _client_for(data).async_list_pkus()
+    _PKUS_CACHE[key] = (now, pkus)
+    return pkus
+
+
+async def _discover_relays_cached(data: dict, pkus: list | None = None) -> list:
+    """Return discovered relays (PKU -> device -> relay), cached briefly.
+
+    Walking every PKU/device takes minutes on the real park, so the settings
+    step always filters by PKU first and only those PKUs are walked.
+    """
+    wanted = sorted({int(item) for item in (pkus or [])})
+    key = "|".join(
+        [
+            str(data.get(CONF_BASE_URL, "")),
+            str(data.get(CONF_ARM_ID, "")),
+            str(data.get(CONF_PASSWORD, "")),
+            str(data.get(CONF_WS_PATH, DEFAULT_WS_PATH)),
+            ",".join(str(item) for item in wanted),
+        ]
+    )
+    now = time.monotonic()
+    hit = _RELAYS_CACHE.get(key)
+    if hit and (now - hit[0]) < _RELAYS_TTL:
+        return hit[1]
+    relays = await _client_for(data).async_discover_relays(wanted or None)
+    _RELAYS_CACHE[key] = (now, relays)
+    return relays
+
+
+def _relay_options(relays: list) -> list[dict]:
+    return [{"value": item["key"], "label": item["label"]} for item in relays]
+
+
+def _pku_filter_options(pkus: list) -> list[dict]:
+    return [{"value": str(pku), "label": f"ПКУ {pku}"} for pku in sorted(pkus)]
+
+
+def _filter_relays(relays: list, pkus: list[str] | None) -> list:
+    if not pkus:
+        return relays
+    wanted = {str(item) for item in pkus}
+    return [item for item in relays if str(item["pku"]) in wanted]
+
+
+def _pkus_from_relay_keys(keys: list[str]) -> list[str]:
+    """Derive PKU numbers from stored relay keys like '20:1025'."""
+    result: set[str] = set()
+    for key in keys or []:
+        parts = str(key).split(":")
+        if len(parts) == 2:
+            result.add(parts[0])
+    return sorted(result)
 
 
 def _pku_select_options(loops: list) -> list[dict]:
@@ -158,6 +247,14 @@ def _loop_schema(
             ): vol.Coerce(float),
         }
     )
+
+
+async def _safe_pkus(data: dict) -> list[int]:
+    """PKU list for the relay filter; empty when the ARM is unreachable."""
+    try:
+        return await _list_pkus_cached(data)
+    except TechlanApiError:
+        return []
 
 
 async def _validate(hass: HomeAssistant, data: dict[str, str]) -> None:
@@ -380,65 +477,63 @@ class TechlanOptionsFlow(config_entries.OptionsFlow):
             selected.update(humidity_selected)
             # The return value of an OptionsFlow is what Home Assistant
             # persists into entry.options.
-            return self.async_create_entry(
-                title="",
-                data={
-                    CONF_BASE_URL: current[CONF_BASE_URL],
-                    CONF_ARM_ID: current[CONF_ARM_ID],
-                    CONF_PASSWORD: current[CONF_PASSWORD],
-                    CONF_WS_PATH: current[CONF_WS_PATH],
-                    CONF_SCAN_INTERVAL: current[CONF_SCAN_INTERVAL],
-                    CONF_SELECTED_LOOPS: sorted(selected),
-                    CONF_TEMPERATURE_LOOPS: temperature_selected,
-                    CONF_TEMPERATURE_SCALE: float(
-                        user_input.get(
-                            CONF_TEMPERATURE_SCALE,
-                            current.get(
-                                CONF_TEMPERATURE_SCALE, DEFAULT_TEMPERATURE_SCALE
-                            ),
-                        )
-                    ),
-                    CONF_TEMPERATURE_OFFSET: float(
-                        user_input.get(
-                            CONF_TEMPERATURE_OFFSET,
-                            current.get(
-                                CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
-                            ),
-                        )
-                    ),
-                    CONF_HUMIDITY_LOOPS: humidity_selected,
-                    CONF_HUMIDITY_SCALE: float(
-                        user_input.get(
-                            CONF_HUMIDITY_SCALE,
-                            current.get(CONF_HUMIDITY_SCALE, DEFAULT_HUMIDITY_SCALE),
-                        )
-                    ),
-                    CONF_HUMIDITY_OFFSET: float(
-                        user_input.get(
-                            CONF_HUMIDITY_OFFSET,
-                            current.get(CONF_HUMIDITY_OFFSET, DEFAULT_HUMIDITY_OFFSET),
-                        )
-                    ),
-                    CONF_TEMPERATURE_ALARM_LOW: float(
-                        user_input.get(
+            self._pending_loops = {
+                CONF_BASE_URL: current[CONF_BASE_URL],
+                CONF_ARM_ID: current[CONF_ARM_ID],
+                CONF_PASSWORD: current[CONF_PASSWORD],
+                CONF_WS_PATH: current[CONF_WS_PATH],
+                CONF_SCAN_INTERVAL: current[CONF_SCAN_INTERVAL],
+                CONF_SELECTED_LOOPS: sorted(selected),
+                CONF_TEMPERATURE_LOOPS: temperature_selected,
+                CONF_TEMPERATURE_SCALE: float(
+                    user_input.get(
+                        CONF_TEMPERATURE_SCALE,
+                        current.get(
+                            CONF_TEMPERATURE_SCALE, DEFAULT_TEMPERATURE_SCALE
+                        ),
+                    )
+                ),
+                CONF_TEMPERATURE_OFFSET: float(
+                    user_input.get(
+                        CONF_TEMPERATURE_OFFSET,
+                        current.get(
+                            CONF_TEMPERATURE_OFFSET, DEFAULT_TEMPERATURE_OFFSET
+                        ),
+                    )
+                ),
+                CONF_HUMIDITY_LOOPS: humidity_selected,
+                CONF_HUMIDITY_SCALE: float(
+                    user_input.get(
+                        CONF_HUMIDITY_SCALE,
+                        current.get(CONF_HUMIDITY_SCALE, DEFAULT_HUMIDITY_SCALE),
+                    )
+                ),
+                CONF_HUMIDITY_OFFSET: float(
+                    user_input.get(
+                        CONF_HUMIDITY_OFFSET,
+                        current.get(CONF_HUMIDITY_OFFSET, DEFAULT_HUMIDITY_OFFSET),
+                    )
+                ),
+                CONF_TEMPERATURE_ALARM_LOW: float(
+                    user_input.get(
+                        CONF_TEMPERATURE_ALARM_LOW,
+                        current.get(
                             CONF_TEMPERATURE_ALARM_LOW,
-                            current.get(
-                                CONF_TEMPERATURE_ALARM_LOW,
-                                DEFAULT_TEMPERATURE_ALARM_LOW,
-                            ),
-                        )
-                    ),
-                    CONF_TEMPERATURE_ALARM_HIGH: float(
-                        user_input.get(
+                            DEFAULT_TEMPERATURE_ALARM_LOW,
+                        ),
+                    )
+                ),
+                CONF_TEMPERATURE_ALARM_HIGH: float(
+                    user_input.get(
+                        CONF_TEMPERATURE_ALARM_HIGH,
+                        current.get(
                             CONF_TEMPERATURE_ALARM_HIGH,
-                            current.get(
-                                CONF_TEMPERATURE_ALARM_HIGH,
-                                DEFAULT_TEMPERATURE_ALARM_HIGH,
-                            ),
-                        )
-                    ),
-                },
-            )
+                            DEFAULT_TEMPERATURE_ALARM_HIGH,
+                        ),
+                    )
+                ),
+            }
+            return await self.async_step_relays()
 
         schema = _loop_schema(
             loops,
@@ -453,3 +548,66 @@ class TechlanOptionsFlow(config_entries.OptionsFlow):
             current.get(CONF_TEMPERATURE_ALARM_HIGH, DEFAULT_TEMPERATURE_ALARM_HIGH),
         )
         return self.async_show_form(step_id="loops", data_schema=schema)
+
+    async def async_step_relays(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Pick the relays to expose (filter by PKU, затем список реле).
+
+        Полный инвентарь реле большой, поэтому шаг двухфазный: сначала оператор
+        отмечает ПКУ, затем выбирает реле уже только этих ПКУ.
+        """
+        current = getattr(self, "_pending", None) or {
+            **self.config_entry.data,
+            **self.config_entry.options,
+        }
+        selected_pkus: list = []
+        selected_relays: list = []
+        if user_input is not None:
+            selected_pkus = list(user_input.get(RELAY_PKU_FIELD, []) or [])
+            selected_relays = list(user_input.get(CONF_SELECTED_RELAYS, []) or [])
+            # Пустой фильтр ПКУ = «реле не нужны» — это осознанное сохранение.
+            if selected_relays or not selected_pkus:
+                loops_data = getattr(self, "_pending_loops", None) or {}
+                return self.async_create_entry(
+                    title="",
+                    data={
+                        **loops_data,
+                        CONF_BASE_URL: current[CONF_BASE_URL],
+                        CONF_ARM_ID: current[CONF_ARM_ID],
+                        CONF_PASSWORD: current[CONF_PASSWORD],
+                        CONF_WS_PATH: current[CONF_WS_PATH],
+                        CONF_SCAN_INTERVAL: current[CONF_SCAN_INTERVAL],
+                        CONF_SELECTED_RELAYS: sorted(set(selected_relays)),
+                        # per-relay карты сохраняем, чтобы не потерять настройки
+                        CONF_RELAY_TIME: current.get(CONF_RELAY_TIME, {}),
+                        CONF_RELAY_PROGRAM: current.get(CONF_RELAY_PROGRAM, {}),
+                    },
+                )
+        else:
+            selected_pkus = _pkus_from_relay_keys(
+                current.get(CONF_SELECTED_RELAYS, [])
+            )
+
+        relays: list = []
+        if selected_pkus:
+            try:
+                relays = _filter_relays(
+                    await _discover_relays_cached(current, selected_pkus),
+                    selected_pkus,
+                )
+            except TechlanApiError:
+                relays = []
+
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    RELAY_PKU_FIELD, default=selected_pkus
+                ): _select(_pku_filter_options(await _safe_pkus(current))),
+                vol.Optional(
+                    CONF_SELECTED_RELAYS,
+                    default=current.get(CONF_SELECTED_RELAYS, []),
+                ): _select(_relay_options(relays)),
+            }
+        )
+        return self.async_show_form(step_id="relays", data_schema=schema)

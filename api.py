@@ -1,11 +1,13 @@
-"""WebSocket-клиент ServerSkif через прокси ARM WebSocket (сенсоры).
+"""WebSocket-клиент ServerSkif через прокси ARM WebSocket (сенсоры + реле).
 
 Общая механика постоянного соединения/лимитов — в ``_shared/shared_api.py``
 (канонический источник — ``tools/ha-shared/shared_api.py``).
 
-``techlan_sensor`` — **только чтение**: клиент не умеет отправлять команды
-управления (нет ``controlPart_*``). Помимо состояния разделов он читает АЦП
-шлейфов (``getShADC``) и извлекает из ответа температуру/влажность.
+``techlan_sensor`` читает состояние разделов/шлейфов (АЦП, температура,
+влажность) и — по решению пользователя от 22.09.2026 — управляет **реле**
+(управляемыми выходами ServerSkif): программы, переключение, время.
+
+Управление разделами (arm/disarm) по-прежнему живёт только в ``techlan_ops``.
 """
 
 from __future__ import annotations
@@ -16,12 +18,22 @@ from typing import Any
 from ._shared.shared_api import (
     PersistentTechlanClient,
     TechlanApiError,
+    decode_relay,
     extract_humidity,
     extract_temperature,
     format_loop_label,
+    format_relay_label,
     loop_key,
     parse_loop_keys,
+    parse_relay_keys,
+    relay_key,
+    relay_time_units,
     websocket_url,
+)
+from ._shared.shared_const import (
+    DEFAULT_RELAY_TIME,
+    RELAY_PROGRAMS,
+    RELAY_TIME_PROGRAMS,
 )
 
 __all__ = ["TechlanApiClient", "TechlanApiError", "websocket_url"]
@@ -85,13 +97,19 @@ class TechlanApiClient(PersistentTechlanClient):
     # --- snapshot -------------------------------------------------------------
 
     async def async_fetch_snapshot(
-        self, selected_loops: list[str] | None = None
+        self,
+        selected_loops: list[str] | None = None,
+        selected_relays: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Fetch PKU/part/loop state over the persistent session."""
-        return await self.async_run(self._fetch_snapshot_sync, selected_loops)
+        """Fetch PKU/part/loop state (and relay state) over the session."""
+        return await self.async_run(
+            self._fetch_snapshot_sync, selected_loops, selected_relays
+        )
 
     def _fetch_snapshot_sync(
-        self, selected_loops: list[str] | None = None
+        self,
+        selected_loops: list[str] | None = None,
+        selected_relays: list[str] | None = None,
     ) -> dict[str, Any]:
         pkus = [
             int(item) for item in (self.request_sync("getListPKU").get("ret") or [])
@@ -180,6 +198,7 @@ class TechlanApiClient(PersistentTechlanClient):
         snapshot: dict[str, Any] = {
             "available": True,
             "pkus": {},
+            "relays": self._read_relays_sync(selected_relays),
             "updated_at": time.time(),
         }
         for pku in pkus:
@@ -195,6 +214,178 @@ class TechlanApiClient(PersistentTechlanClient):
                 },
             }
         return snapshot
+
+    # --- реле (управляемые выходы) -------------------------------------------
+
+    async def async_discover_relays(
+        self, pkus: list[int] | None = None
+    ) -> list[dict[str, Any]]:
+        """Discover relay choices (PKU -> device -> relay).
+
+        ``pkus`` ограничивает обход выбранными пультами — полный инвентарь реле
+        большой, поэтому настройки сначала спрашивают ПКУ, а затем обходят только
+        их (иначе обход всех ПКУ/приборов занимает минуты).
+        """
+        return await self.async_run(self._discover_relays_sync, pkus)
+
+    async def async_list_pkus(self) -> list[int]:
+        """Cheap PKU list (for the settings selector)."""
+        return await self.async_run(self._list_pkus_sync)
+
+    def _list_pkus_sync(self) -> list[int]:
+        return [
+            int(item) for item in (self.request_sync("getListPKU").get("ret") or [])
+        ]
+
+    def _discover_relays_sync(
+        self, pkus: list[int] | None = None
+    ) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        available = [
+            int(item) for item in (self.request_sync("getListPKU").get("ret") or [])
+        ]
+        if pkus:
+            wanted = {int(item) for item in pkus}
+            pkus = [pku for pku in available if pku in wanted]
+        else:
+            pkus = available
+        for pku in pkus:
+            devices = [
+                int(item)
+                for item in (
+                    self.request_sync("getListDevices", pku=pku).get("ret") or []
+                )
+            ]
+            for device in devices:
+                relays = [
+                    int(item)
+                    for item in (
+                        self.request_sync(
+                            "getListRelay", pku=pku, extra={"req": device}
+                        ).get("ret")
+                        or []
+                    )
+                ]
+                if not relays:
+                    continue
+                descriptions = self._relay_descriptions(pku, relays)
+                for relay, description in zip(relays, descriptions):
+                    dev, number = decode_relay(relay)
+                    result.append(
+                        {
+                            "key": relay_key(pku, relay),
+                            "pku": pku,
+                            "rl": relay,
+                            "device": dev,
+                            "relay": number,
+                            "description": description,
+                            "label": format_relay_label(pku, relay, description),
+                        }
+                    )
+        return result
+
+    def _relay_descriptions(self, pku: int, relays: list[int]) -> list[str]:
+        """Best-effort relay descriptions (empty strings on timeout)."""
+        try:
+            return [
+                str(item)
+                for item in (
+                    self.request_sync(
+                        "getRelayDescription",
+                        pku=pku,
+                        extra={"req": relays},
+                        teardown_on_timeout=False,
+                    ).get("ret")
+                    or []
+                )
+            ]
+        except TechlanApiError:
+            return []
+
+    def _read_relays_sync(
+        self, selected_relays: list[str] | None
+    ) -> dict[str, dict[str, Any]]:
+        """Read state/description for the configured relays (grouped by PKU)."""
+        selected = parse_relay_keys(selected_relays)
+        if not selected:
+            return {}
+        by_pku: dict[int, list[int]] = {}
+        for pku, relay in selected:
+            by_pku.setdefault(pku, []).append(relay)
+        result: dict[str, dict[str, Any]] = {}
+        for pku in sorted(by_pku):
+            relays = sorted(set(by_pku[pku]))
+            states = self._relay_values("getRelayState", pku, relays)
+            descriptions = self._relay_descriptions(pku, relays)
+            for index, relay in enumerate(relays):
+                dev, number = decode_relay(relay)
+                state = states[index] if index < len(states) else None
+                description = descriptions[index] if index < len(descriptions) else ""
+                result[relay_key(pku, relay)] = {
+                    "pku": pku,
+                    "rl": relay,
+                    "device": dev,
+                    "relay": number,
+                    "state": int(state) if state is not None else None,
+                    "description": description,
+                }
+        return result
+
+    def _relay_values(self, funct: str, pku: int, relays: list[int]) -> list[Any]:
+        """Best-effort list read (empty list on timeout)."""
+        try:
+            return list(
+                self.request_sync(
+                    funct,
+                    pku=pku,
+                    extra={"req": relays},
+                    teardown_on_timeout=False,
+                ).get("ret")
+                or []
+            )
+        except TechlanApiError:
+            return []
+
+    async def async_control_relay(
+        self,
+        pku: int,
+        relay: int,
+        program: str = "on",
+        *,
+        time_seconds: float | None = None,
+        mask: int | None = None,
+        delay: int | None = None,
+    ) -> None:
+        """Apply a relay program (``controlRelay``).
+
+        ``program`` — одно из имён ``RELAY_PROGRAMS`` (on/off/reset/on_time/
+        off_time/blink_off/blink_on/blink_off_time/blink_on_time). Для программ
+        из ``RELAY_TIME_PROGRAMS`` добавляется поле ``time`` (секунды переводятся
+        в протокольные единицы 0.125 c).
+        """
+        code = RELAY_PROGRAMS.get(str(program))
+        if code is None:
+            raise TechlanApiError(f"unknown relay program: {program!r}")
+        payload: dict[str, Any] = {
+            "funct": "controlRelay",
+            "pku": int(pku),
+            "rl": int(relay),
+            "prog": int(code),
+        }
+        if str(program) in RELAY_TIME_PROGRAMS:
+            seconds = DEFAULT_RELAY_TIME if time_seconds is None else time_seconds
+            payload["time"] = relay_time_units(seconds)
+            if mask is not None:
+                payload["mask"] = int(mask)
+            if delay is not None:
+                payload["delay"] = int(delay)
+        await self.async_send_command(payload)
+
+    async def async_invert_relay(self, pku: int, relay: int) -> None:
+        """Toggle a relay (``controlRelay_Inv``)."""
+        await self.async_send_command(
+            {"funct": "controlRelay_Inv", "pku": int(pku), "rl": int(relay)}
+        )
 
     def _read_adc(self, pku: int, sh: int) -> dict[str, Any]:
         """Read one ADC reply, tolerating absence (empty dict on timeout)."""

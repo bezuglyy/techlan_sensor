@@ -1,11 +1,11 @@
 # SecurARM Sensor
 ![Release](https://img.shields.io/github/v/release/bezuglyy/techlan_sensor?label=Release&style=flat-square) ![HACS](https://img.shields.io/badge/HACS-Custom%20Repository-purple?style=flat-square) ![License](https://img.shields.io/github/license/bezuglyy/techlan_sensor?style=flat-square) ![HA](https://img.shields.io/badge/HA-2025.1%2B-2ea44f?style=flat-square)
-Кастомная интеграция для [Home Assistant](https://www.home-assistant.io) · версия **0.6.1**.
+Кастомная интеграция для [Home Assistant](https://www.home-assistant.io) · версия **0.6.3**.
 ![icon](brand/icon.png)
 | | |
 |---|---|
 | Домен | `techlan_sensor` |
-| Версия | 0.6.1 |
+| Версия | 0.6.3 |
 | Тип | custom integration |
 ## Описание
 Сенсоры шлейфов охранной системы ServerSkif (**SecurARM**) и **управление реле**. Отображаемое имя интеграции — **SecurARM Sensor**; домен `techlan_sensor` и `entity_id` не меняются.
@@ -13,6 +13,13 @@
 - Полная настройка через UI (config flow)
 - Климат: АЦП шлейфов, температура/влажность с калибровкой (`scale`/`offset`) и порогами тревоги
 - **Реле** (управляемые выходы ServerSkif): состояние, вкл/выкл, переключение, 9 программ, время
+### Изменения 0.6.3
+- 🐞 **Исправлен пустой список шлейфов в настройках** («Выбор шлейфов» — ни одной строки).
+  - Пустой ответ опроса ARM больше **не кэшируется** (раньше пустой список «залипал» на 10 минут — как раз после рестарта HA/ARM).
+  - Добавлен **автоматический повтор** опроса (1 раз), клиенты опроса корректно **закрываются** (нет утечки WS-соединений).
+  - Если опрос всё же не удался — показываются **ранее выбранные шлейфы** и понятное сообщение вместо пустого списка.
+### Изменения 0.6.2
+- 🖼️ **Фирменный знак SecurARM** (щит с шестернёй и замком, логотип автора) в `brand/` — icon/logo + тёмные варианты и `@2x`.
 ### Изменения 0.6.1
 - 🏷️ **Переименование в SecurARM:** отображаемое имя интеграции и устройства — **SecurARM Sensor**, обновлены логотипы/иконки (`brand/`, вордмарк **SECURARM**).
 - ⚠️ Домен `techlan_sensor`, `unique_id` и все `entity_id` **не изменены** — история и автоматизации сохраняются.
@@ -46,6 +53,10 @@ ServerSkif (Techlan) security loop sensors and **relay control**.
 - Full configuration via UI (config flow)
 - Climate: loop ADC, temperature/humidity with scale/offset and alarm thresholds
 - **Relays** (ServerSkif controllable outputs): state, on/off, toggle, 9 programs, duration
+### Changes 0.6.3
+- 🐞 **Fixed empty loop list in settings** (“Select loops” showed nothing): empty ARM response is no longer cached (it used to stick for 10 minutes right after an HA/ARM restart), a retry was added, discovery clients are closed, and the previously selected loops are shown with a clear message when the query fails.
+### Changes 0.6.2
+- 🖼️ **Фирменный знак SecurARM** (щит с шестернёй и замком, логотип автора) в `brand/` — icon/logo + тёмные варианты и `@2x`.
 ### Changes 0.6.1
 - 🏷️ **Renamed to SecurARM:** integration and device display name — **SecurARM Sensor**; brand assets regenerated with the **SECURARM** wordmark.
 - ⚠️ Domain `techlan_sensor`, `unique_id`s and all `entity_id`s are unchanged.

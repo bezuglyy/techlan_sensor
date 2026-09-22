@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import voluptuous as vol
@@ -10,7 +11,13 @@ from homeassistant.helpers import selector
 from homeassistant.core import HomeAssistant
 
 from .api import TechlanApiClient, TechlanApiError
-from ._shared.shared_api import CannotConnectError, url_is_valid
+from ._shared.shared_api import (
+    CannotConnectError,
+    format_loop_label,
+    loop_key,
+    parse_loop_keys,
+    url_is_valid,
+)
 from .const import (
     CONF_ARM_ID,
     CONF_BASE_URL,
@@ -51,7 +58,13 @@ _LOOPS_TTL = 600
 
 
 async def _discover_loops_cached(data: dict) -> list:
-    """Return the discovered loops, reusing a recent result when possible."""
+    """Return the discovered loops, reusing a recent result when possible.
+
+    Пустой результат НЕ кэшируется: сразу после рестарта HA/ARM ServerSkif
+    опрос может отдать пусто, и раньше это «залипало» на 10 минут, из-за чего
+    в списке выбора шлейфов не было ни одной строки. Теперь делаем один
+    повтор, а если и он пуст — сообщаем ошибку (шаг покажет её оператору).
+    """
     key = "|".join(
         [
             str(data.get(CONF_BASE_URL, "")),
@@ -64,15 +77,32 @@ async def _discover_loops_cached(data: dict) -> list:
     hit = _LOOPS_CACHE.get(key)
     if hit and (now - hit[0]) < _LOOPS_TTL:
         return hit[1]
-    client = TechlanApiClient(
-        data[CONF_BASE_URL].rstrip("/"),
-        data[CONF_ARM_ID],
-        data[CONF_PASSWORD],
-        data.get(CONF_WS_PATH, DEFAULT_WS_PATH),
-    )
-    loops = await client.async_discover_loops()
-    _LOOPS_CACHE[key] = (now, loops)
-    return loops
+
+    loops: list = []
+    last_error: Exception | None = None
+    for attempt in (1, 2):
+        client = _client_for(data)
+        try:
+            loops = await client.async_discover_loops()
+        except TechlanApiError as exc:  # нет связи — попробуем ещё раз
+            last_error = exc
+            loops = []
+        finally:
+            try:
+                await client.async_shutdown()
+            except Exception:  # noqa: BLE001 - закрытие не критично
+                pass
+        if loops:
+            break
+        if attempt == 1:
+            await asyncio.sleep(1.0)
+
+    if loops:
+        _LOOPS_CACHE[key] = (now, loops)
+        return loops
+    if last_error is not None:
+        raise last_error
+    raise TechlanApiError("ARM вернул пустой список шлейфов")
 
 
 _RELAYS_CACHE: dict[str, tuple[float, list]] = {}
@@ -106,8 +136,16 @@ async def _list_pkus_cached(data: dict) -> list[int]:
     hit = _PKUS_CACHE.get(key)
     if hit and (now - hit[0]) < _RELAYS_TTL:
         return hit[1]
-    pkus = await _client_for(data).async_list_pkus()
-    _PKUS_CACHE[key] = (now, pkus)
+    client = _client_for(data)
+    try:
+        pkus = await client.async_list_pkus()
+    finally:
+        try:
+            await client.async_shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+    if pkus:
+        _PKUS_CACHE[key] = (now, pkus)
     return pkus
 
 
@@ -131,8 +169,16 @@ async def _discover_relays_cached(data: dict, pkus: list | None = None) -> list:
     hit = _RELAYS_CACHE.get(key)
     if hit and (now - hit[0]) < _RELAYS_TTL:
         return hit[1]
-    relays = await _client_for(data).async_discover_relays(wanted or None)
-    _RELAYS_CACHE[key] = (now, relays)
+    client = _client_for(data)
+    try:
+        relays = await client.async_discover_relays(wanted or None)
+    finally:
+        try:
+            await client.async_shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+    if relays:  # пустой список не кэшируем — иначе «залипнет» на 10 минут
+        _RELAYS_CACHE[key] = (now, relays)
     return relays
 
 
@@ -183,6 +229,23 @@ def _filter_loops(loops: list, pkus: list[str] | None) -> list:
 
 def _loop_options(loops: list) -> list[dict]:
     return [{"value": item["key"], "label": item["label"]} for item in loops]
+
+
+def _fallback_loop_options(keys: list[str]) -> list[dict]:
+    """Опции из уже сохранённых ключей — когда живой опрос не удался.
+
+    Оператор видит свои текущие шлейфы (и может их снять/добавить вручную),
+    а не пустой список.
+    """
+    options: list[dict] = []
+    for pku, part, sh in sorted(parse_loop_keys(keys or [])):
+        options.append(
+            {
+                "value": loop_key(pku, part, sh),
+                "label": format_loop_label(pku, part, sh, None),
+            }
+        )
+    return options
 
 
 def _pkus_from_loop_keys(keys: list[str]) -> list[str]:
@@ -317,6 +380,8 @@ class TechlanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             loops = await _discover_loops_cached(data)
         except TechlanApiError:
             return self.async_abort(reason="cannot_connect")
+        if not loops:
+            return self.async_abort(reason="cannot_connect")
         if user_input is not None:
             self._pending_pkus = list(user_input.get("pkus", []))
             return await self.async_step_select_loops()
@@ -335,6 +400,8 @@ class TechlanConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             loops = _filter_loops(await _discover_loops_cached(data), pkus)
         except TechlanApiError:
+            return self.async_abort(reason="cannot_connect")
+        if not loops:
             return self.async_abort(reason="cannot_connect")
         if user_input is not None:
             selected = set(user_input.get(CONF_SELECTED_LOOPS, []))
@@ -390,10 +457,14 @@ class TechlanOptionsFlow(config_entries.OptionsFlow):
     ) -> config_entries.ConfigFlowResult:
         errors: dict[str, str] = {}
         current = {**self.config_entry.data, **self.config_entry.options}
+        loops_error = False
         try:
             loops = await _discover_loops_cached(current)
         except TechlanApiError:
             loops = []
+            loops_error = True
+        if not loops:
+            loops_error = True
 
         if user_input is not None:
             pending = {
@@ -440,6 +511,8 @@ class TechlanOptionsFlow(config_entries.OptionsFlow):
                 ),
             }
         )
+        if loops_error and "base" not in errors:
+            errors["base"] = "loops_unavailable"
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
 
     async def async_step_loops(
@@ -452,10 +525,32 @@ class TechlanOptionsFlow(config_entries.OptionsFlow):
         pkus = getattr(self, "_pending_pkus", None)
         if pkus is None:
             pkus = _pkus_from_loop_keys(current.get(CONF_SELECTED_LOOPS, []))
+        loops_error = False
         try:
             loops = _filter_loops(await _discover_loops_cached(current), pkus)
         except TechlanApiError:
             loops = []
+            loops_error = True
+        if not loops:
+            loops_error = True
+            # Опрос не удался — показываем уже сохранённые шлейфы,
+            # чтобы список не был пустым и настройки можно было сохранить.
+            known = list(current.get(CONF_SELECTED_LOOPS, []))
+            known += list(current.get(CONF_TEMPERATURE_LOOPS, []))
+            known += list(current.get(CONF_HUMIDITY_LOOPS, []))
+            fallback = _fallback_loop_options(known)
+            if fallback:
+                loops = [
+                    {
+                        "key": item["value"],
+                        "pku": 0,
+                        "part": 0,
+                        "sh": 0,
+                        "description": "",
+                        "label": item["label"],
+                    }
+                    for item in fallback
+                ]
 
         if user_input is not None:
             selected = set(
@@ -547,6 +642,12 @@ class TechlanOptionsFlow(config_entries.OptionsFlow):
             current.get(CONF_TEMPERATURE_ALARM_LOW, DEFAULT_TEMPERATURE_ALARM_LOW),
             current.get(CONF_TEMPERATURE_ALARM_HIGH, DEFAULT_TEMPERATURE_ALARM_HIGH),
         )
+        if loops_error:
+            return self.async_show_form(
+                step_id="loops",
+                data_schema=schema,
+                errors={"base": "loops_unavailable"},
+            )
         return self.async_show_form(step_id="loops", data_schema=schema)
 
     async def async_step_relays(

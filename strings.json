@@ -82,10 +82,12 @@
     }
   },
   "error": {
-    "cannot_connect": "Не удалось подключиться к ARM WebSocket или авторизоваться в ServerSkif"
+    "cannot_connect": "Не удалось подключиться к ARM WebSocket или авторизоваться в ServerSkif",
+    "loops_unavailable": "Список шлейфов не получен от ARM (ServerSkif): связь есть, но данные пусты. Показаны ранее выбранные шлейфы — проверьте связь и обновите страницу. Если связи нет — проверьте адрес и пароль."
   },
   "abort": {
-    "already_configured": "Этот адрес ARM уже настроен"
+    "already_configured": "Этот адрес ARM уже настроен",
+    "cannot_connect": "Нет связи с ARM (ServerSkif) или список шлейфов пуст — проверьте подключение"
   },
   "entity": {
     "binary_sensor": {

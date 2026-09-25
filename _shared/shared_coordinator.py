@@ -52,6 +52,7 @@ class TechlanBaseCoordinator(DataUpdateCoordinator[dict]):
         scan_interval: int,
         selected_loops: list[str] | None = None,
         selected_relays: list[str] | None = None,
+        selected_readers: list[str] | None = None,
         effective_options: dict[str, Any] | None = None,
         emit_events: bool = False,
     ) -> None:
@@ -59,6 +60,7 @@ class TechlanBaseCoordinator(DataUpdateCoordinator[dict]):
         self.client = client
         self.selected_loops = selected_loops
         self.selected_relays = selected_relays
+        self.selected_readers = selected_readers
         self.options = dict(effective_options or {})
         self.emit_events = emit_events
         # Заполняются интеграцией после регистрации родительского устройства.
@@ -98,6 +100,8 @@ class TechlanBaseCoordinator(DataUpdateCoordinator[dict]):
             extra: dict[str, Any] = {}
             if self.selected_relays is not None:
                 extra["selected_relays"] = self.selected_relays
+            if self.selected_readers is not None:
+                extra["selected_readers"] = self.selected_readers
             snapshot = await self.client.async_fetch_snapshot(
                 self.selected_loops, **extra
             )

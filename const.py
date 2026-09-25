@@ -15,6 +15,7 @@ from ._shared.shared_const import (
     CONF_RELAY_TIME,
     CONF_SCAN_INTERVAL,
     CONF_SELECTED_LOOPS,
+    CONF_SELECTED_READERS,
     CONF_SELECTED_RELAYS,
     CONF_TEMPERATURE_ALARM_HIGH,
     CONF_TEMPERATURE_ALARM_LOW,
@@ -38,6 +39,16 @@ from ._shared.shared_const import (
     DISARM_CONFIRM_CODES,
     DISARMED_CODES,
     RELAY_PROGRAMS,
+    DEFAULT_READER_PROGRAM,
+    READER_PROGRAM_FREE,
+    READER_PROGRAM_LOCK,
+    READER_PROGRAM_NORMAL,
+    READER_PROGRAM_OPEN,
+    READER_PROGRAMS,
+    READER_PROGRAM_NAMES,
+    READER_STATE_ENTRY_LOCKED,
+    READER_STATE_EXIT_LOCKED,
+    READER_STATE_FREE,
     RELAY_PROGRAMS as RELAY_PROGRAM_CODES,
     RELAY_STATE_BLINK,
     RELAY_STATE_NAMES,
@@ -53,10 +64,10 @@ DOMAIN = "techlan_sensor"
 PLATFORMS = ["sensor", "binary_sensor", "number", "select", "switch", "button"]
 
 # Версия схемы config entry: minor обновляется при миграциях (async_migrate_entry).
-CONFIG_MINOR_VERSION = 4
+CONFIG_MINOR_VERSION = 5
 
 # Версия интеграции (синхронизировать с manifest.json).
-INTEGRATION_VERSION = "0.6.3"
+INTEGRATION_VERSION = "0.7.0"
 
 # Идентификатор и параметры родительского устройства.
 # Отличается от techlan_ops ("arm_ops"), чтобы устройства двух интеграций

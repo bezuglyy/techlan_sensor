@@ -13,6 +13,7 @@ from .const import (
     CONF_PASSWORD,
     CONF_SCAN_INTERVAL,
     CONF_SELECTED_LOOPS,
+    CONF_SELECTED_READERS,
     CONF_SELECTED_RELAYS,
     CONF_WS_PATH,
     DEFAULT_SCAN_INTERVAL,
@@ -40,6 +41,7 @@ class TechlanDataUpdateCoordinator(TechlanBaseCoordinator):
             scan_interval=int(data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
             selected_loops=data.get(CONF_SELECTED_LOOPS),
             selected_relays=data.get(CONF_SELECTED_RELAYS),
+            selected_readers=data.get(CONF_SELECTED_READERS),
             effective_options=data,
         )
 
@@ -47,3 +49,8 @@ class TechlanDataUpdateCoordinator(TechlanBaseCoordinator):
     def relay_states(self) -> dict:
         """Relay state snapshot keyed by ``pku:rl`` (empty when none selected)."""
         return ((self.data or {}).get("relays")) or {}
+
+    @property
+    def reader_states(self) -> dict:
+        """Reader state snapshot keyed by ``pku:rd`` (empty when none selected)."""
+        return ((self.data or {}).get("readers")) or {}

@@ -5,7 +5,10 @@
 
 ``techlan_sensor`` читает состояние разделов/шлейфов (АЦП, температура,
 влажность) и — по решению пользователя от 22.09.2026 — управляет **реле**
-(управляемыми выходами ServerSkif): программы, переключение, время.
+(управляемыми выходами ServerSkif): программы, переключение, время, и —
+по решению пользователя от 25.09.2026 — управляет **считывателями**
+(контроллерами доступа, напр. С2000-2): открытие доступа, свободный проход,
+запрет доступа.
 
 Управление разделами (arm/disarm) по-прежнему живёт только в ``techlan_ops``.
 """
@@ -18,20 +21,26 @@ from typing import Any
 from ._shared.shared_api import (
     PersistentTechlanClient,
     TechlanApiError,
+    decode_reader,
     decode_relay,
     extract_humidity,
     extract_temperature,
     format_loop_label,
+    format_reader_label,
     format_relay_label,
     loop_key,
     parse_loop_keys,
+    parse_reader_keys,
     parse_relay_keys,
+    reader_key,
     relay_key,
     relay_time_units,
     websocket_url,
 )
 from ._shared.shared_const import (
+    DEFAULT_READER_PROGRAM,
     DEFAULT_RELAY_TIME,
+    READER_PROGRAMS,
     RELAY_PROGRAMS,
     RELAY_TIME_PROGRAMS,
 )
@@ -100,16 +109,18 @@ class TechlanApiClient(PersistentTechlanClient):
         self,
         selected_loops: list[str] | None = None,
         selected_relays: list[str] | None = None,
+        selected_readers: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Fetch PKU/part/loop state (and relay state) over the session."""
+        """Fetch PKU/part/loop state (and relay/reader state) over the session."""
         return await self.async_run(
-            self._fetch_snapshot_sync, selected_loops, selected_relays
+            self._fetch_snapshot_sync, selected_loops, selected_relays, selected_readers
         )
 
     def _fetch_snapshot_sync(
         self,
         selected_loops: list[str] | None = None,
         selected_relays: list[str] | None = None,
+        selected_readers: list[str] | None = None,
     ) -> dict[str, Any]:
         pkus = [
             int(item) for item in (self.request_sync("getListPKU").get("ret") or [])
@@ -199,6 +210,7 @@ class TechlanApiClient(PersistentTechlanClient):
             "available": True,
             "pkus": {},
             "relays": self._read_relays_sync(selected_relays),
+            "readers": self._read_readers_sync(selected_readers),
             "updated_at": time.time(),
         }
         for pku in pkus:
@@ -315,7 +327,7 @@ class TechlanApiClient(PersistentTechlanClient):
         result: dict[str, dict[str, Any]] = {}
         for pku in sorted(by_pku):
             relays = sorted(set(by_pku[pku]))
-            states = self._relay_values("getRelayState", pku, relays)
+            states = self._list_values("getRelayState", pku, relays)
             descriptions = self._relay_descriptions(pku, relays)
             for index, relay in enumerate(relays):
                 dev, number = decode_relay(relay)
@@ -331,14 +343,14 @@ class TechlanApiClient(PersistentTechlanClient):
                 }
         return result
 
-    def _relay_values(self, funct: str, pku: int, relays: list[int]) -> list[Any]:
+    def _list_values(self, funct: str, pku: int, items: list[int]) -> list[Any]:
         """Best-effort list read (empty list on timeout)."""
         try:
             return list(
                 self.request_sync(
                     funct,
                     pku=pku,
-                    extra={"req": relays},
+                    extra={"req": items},
                     teardown_on_timeout=False,
                 ).get("ret")
                 or []
@@ -385,6 +397,174 @@ class TechlanApiClient(PersistentTechlanClient):
         """Toggle a relay (``controlRelay_Inv``)."""
         await self.async_send_command(
             {"funct": "controlRelay_Inv", "pku": int(pku), "rl": int(relay)}
+        )
+
+    # --- считыватели (контроллеры доступа, напр. С2000-2) --------------------
+
+    async def async_discover_readers(
+        self, pkus: list[int] | None = None
+    ) -> list[dict[str, Any]]:
+        """Discover reader choices (PKU -> device -> reader).
+
+        Полный инвентарь большой, поэтому настройки сначала спрашивают ПКУ,
+        а затем обходят только их (как и для реле).
+        """
+        return await self.async_run(self._discover_readers_sync, pkus)
+
+    def _discover_readers_sync(
+        self, pkus: list[int] | None = None
+    ) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        available = [
+            int(item) for item in (self.request_sync("getListPKU").get("ret") or [])
+        ]
+        if pkus:
+            wanted = {int(item) for item in pkus}
+            pkus = [pku for pku in available if pku in wanted]
+        else:
+            pkus = available
+        for pku in pkus:
+            devices = [
+                int(item)
+                for item in (
+                    self.request_sync("getListDevices", pku=pku).get("ret") or []
+                )
+            ]
+            if not devices:
+                continue
+            # Описания/типы приборов — по одному запросу на ПКУ (дёшево), чтобы
+            # в списке видеть «прибор 54 «Ворота КБИ» (С2000-2)».
+            device_desc = self._list_text("getDeviceDescription", pku, devices)
+            device_types = self._list_text("getDeviceTypeStr", pku, devices)
+            for index, device in enumerate(devices):
+                readers = [
+                    int(item)
+                    for item in (
+                        self.request_sync(
+                            "getListReader", pku=pku, extra={"req": device}
+                        ).get("ret")
+                        or []
+                    )
+                ]
+                if not readers:
+                    continue
+                descriptions = self._reader_descriptions(pku, readers)
+                desc = device_desc[index] if index < len(device_desc) else ""
+                dtype = device_types[index] if index < len(device_types) else ""
+                for reader, description in zip(readers, descriptions):
+                    dev, number = decode_reader(reader)
+                    result.append(
+                        {
+                            "key": reader_key(pku, reader),
+                            "pku": pku,
+                            "rd": reader,
+                            "device": dev,
+                            "reader": number,
+                            "description": description,
+                            "device_description": desc,
+                            "device_type": dtype,
+                            "label": format_reader_label(
+                                pku, reader, description, desc, dtype
+                            ),
+                        }
+                    )
+        # Контроллеры ДОСТУПА (С2000-2) — в начало списка: остальные приборы тоже
+        # отдают «считыватели» (нумерация как у реле), это шум для выбора.
+        result.sort(
+            key=lambda item: (
+                "С2000-2" not in str(item.get("device_type") or ""),
+                int(item["pku"]),
+                int(item["device"]),
+                int(item["reader"]),
+            )
+        )
+        return result
+
+    def _list_text(self, funct: str, pku: int, items: list[int]) -> list[str]:
+        """Best-effort text list read (empty list on timeout)."""
+        try:
+            return [
+                str(item)
+                for item in (
+                    self.request_sync(
+                        funct,
+                        pku=pku,
+                        extra={"req": items},
+                        teardown_on_timeout=False,
+                    ).get("ret")
+                    or []
+                )
+            ]
+        except TechlanApiError:
+            return []
+
+    def _reader_descriptions(self, pku: int, readers: list[int]) -> list[str]:
+        """Best-effort reader descriptions (empty strings on timeout)."""
+        try:
+            return [
+                str(item)
+                for item in (
+                    self.request_sync(
+                        "getReaderDescription",
+                        pku=pku,
+                        extra={"req": readers},
+                        teardown_on_timeout=False,
+                    ).get("ret")
+                    or []
+                )
+            ]
+        except TechlanApiError:
+            return []
+
+    def _read_readers_sync(
+        self, selected_readers: list[str] | None
+    ) -> dict[str, dict[str, Any]]:
+        """Read state/description for the configured readers (grouped by PKU)."""
+        selected = parse_reader_keys(selected_readers)
+        if not selected:
+            return {}
+        by_pku: dict[int, list[int]] = {}
+        for pku, reader in selected:
+            by_pku.setdefault(pku, []).append(reader)
+        result: dict[str, dict[str, Any]] = {}
+        for pku in sorted(by_pku):
+            readers = sorted(set(by_pku[pku]))
+            states = self._list_values("getReaderState", pku, readers)
+            descriptions = self._reader_descriptions(pku, readers)
+            for index, reader in enumerate(readers):
+                dev, number = decode_reader(reader)
+                state = states[index] if index < len(states) else None
+                description = descriptions[index] if index < len(descriptions) else ""
+                result[reader_key(pku, reader)] = {
+                    "pku": pku,
+                    "rd": reader,
+                    "device": dev,
+                    "reader": number,
+                    "state": int(state) if state is not None else None,
+                    "description": description,
+                }
+        return result
+
+    async def async_control_reader(
+        self, pku: int, reader: int, program: str = DEFAULT_READER_PROGRAM
+    ) -> None:
+        """Apply a reader program (``controlReader``, Таблица А.4).
+
+        ``program`` — одно из имён ``READER_PROGRAMS``: open (предоставление
+        доступа), normal (разрешение доступа), unlock_reader/unlock_button,
+        lock (запрет доступа), lock_reader/lock_button, free (открытие
+        свободного доступа).
+        """
+        code = READER_PROGRAMS.get(str(program))
+        if code is None:
+            raise TechlanApiError(f"unknown reader program: {program!r}")
+        await self.async_send_command(
+            {
+                "funct": "controlReader",
+                "pku": int(pku),
+                "rd": int(reader),
+                "prog": int(code),
+            }
         )
 
     def _read_adc(self, pku: int, sh: int) -> dict[str, Any]:

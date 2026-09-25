@@ -11,6 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from ._shared.shared_api import reader_state_text
 from ._shared.shared_entities import build_device_info
 from .const import (
     CONF_HUMIDITY_LOOPS,
@@ -27,6 +28,7 @@ from .const import (
     RELAY_STATE_NAMES,
 )
 from .coordinator import TechlanDataUpdateCoordinator
+from .reader_base import TechlanReaderEntity, configured_readers
 from .relay_base import TechlanRelayEntity, configured_relays
 
 
@@ -87,6 +89,11 @@ async def async_setup_entry(
     for pku, relay in configured_relays(config):
         relay_entities.append(TechlanRelayStateSensor(coordinator, entry, pku, relay))
     async_add_entities(relay_entities)
+
+    reader_entities: list = []
+    for pku, reader in configured_readers(config):
+        reader_entities.append(TechlanReaderStateSensor(coordinator, entry, pku, reader))
+    async_add_entities(reader_entities)
 
 
 class TechlanLoopAdcSensor(
@@ -341,5 +348,40 @@ class TechlanRelayStateSensor(
     def extra_state_attributes(self) -> dict:
         return {
             **self._relay_extra(),
+            "description": self._facts.get("description") or "",
+        }
+
+
+class TechlanReaderStateSensor(
+    CoordinatorEntity[TechlanDataUpdateCoordinator], SensorEntity, TechlanReaderEntity
+):
+    """Состояние считывателя (доступ разрешён / запрет / свободный проход)."""
+
+    _reader_entity_suffix = "reader_state"
+    _attr_has_entity_name = False
+    _attr_icon = "mdi:door-open"
+
+    def __init__(
+        self,
+        coordinator: TechlanDataUpdateCoordinator,
+        entry: ConfigEntry,
+        pku: int,
+        reader: int,
+    ) -> None:
+        super().__init__(coordinator)
+        self._init_reader(coordinator, entry, pku, reader)
+        self._attr_name = f"{self._reader_name()} · состояние"
+
+    @property
+    def native_value(self) -> str:
+        state = self._facts.get("state")
+        if state is None:
+            return "неизвестно"
+        return reader_state_text(state)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            **self._reader_extra(),
             "description": self._facts.get("description") or "",
         }

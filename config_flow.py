@@ -29,6 +29,7 @@ from .const import (
     CONF_RELAY_TIME,
     CONF_SCAN_INTERVAL,
     CONF_SELECTED_LOOPS,
+    CONF_SELECTED_READERS,
     CONF_SELECTED_RELAYS,
     CONF_TEMPERATURE_ALARM_HIGH,
     CONF_TEMPERATURE_ALARM_LOW,
@@ -180,6 +181,66 @@ async def _discover_relays_cached(data: dict, pkus: list | None = None) -> list:
     if relays:  # пустой список не кэшируем — иначе «залипнет» на 10 минут
         _RELAYS_CACHE[key] = (now, relays)
     return relays
+
+
+_READERS_CACHE: dict[str, tuple[float, list]] = {}
+
+# Поле фильтра ПКУ на шаге выбора считывателей (в options не сохраняется).
+READER_PKU_FIELD = "reader_pkus"
+
+
+async def _discover_readers_cached(data: dict, pkus: list | None = None) -> list:
+    """Return discovered readers (PKU -> device -> reader), cached briefly.
+
+    Полный обход всех ПКУ/приборов занимает минуты, поэтому настройки сначала
+    спрашивают ПКУ, а затем обходят только их (как и для реле).
+    """
+    wanted = sorted({int(item) for item in (pkus or [])})
+    key = "|".join(
+        [
+            str(data.get(CONF_BASE_URL, "")),
+            str(data.get(CONF_ARM_ID, "")),
+            str(data.get(CONF_PASSWORD, "")),
+            str(data.get(CONF_WS_PATH, DEFAULT_WS_PATH)),
+            ",".join(str(item) for item in wanted),
+        ]
+    )
+    now = time.monotonic()
+    hit = _READERS_CACHE.get(key)
+    if hit and (now - hit[0]) < _RELAYS_TTL:
+        return hit[1]
+    client = _client_for(data)
+    try:
+        readers = await client.async_discover_readers(wanted or None)
+    finally:
+        try:
+            await client.async_shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+    if readers:  # пустой список не кэшируем — иначе «залипнет» на 10 минут
+        _READERS_CACHE[key] = (now, readers)
+    return readers
+
+
+def _reader_options(readers: list) -> list[dict]:
+    return [{"value": item["key"], "label": item["label"]} for item in readers]
+
+
+def _filter_readers(readers: list, pkus: list[str] | None) -> list:
+    if not pkus:
+        return readers
+    wanted = {str(item) for item in pkus}
+    return [item for item in readers if str(item["pku"]) in wanted]
+
+
+def _pkus_from_reader_keys(keys: list[str]) -> list[str]:
+    """Derive PKU numbers from stored reader keys like '1:2305'."""
+    result: set[str] = set()
+    for key in keys or []:
+        parts = str(key).split(":")
+        if len(parts) == 2:
+            result.add(parts[0])
+    return sorted(result)
 
 
 def _relay_options(relays: list) -> list[dict]:
@@ -485,7 +546,7 @@ class TechlanOptionsFlow(config_entries.OptionsFlow):
                 else:
                     self._pending = {**current, **pending}
                     self._pending_pkus = list(user_input.get("pkus", []))
-                    return await self.async_step_loops()
+                    return await self.async_step_readers()
 
         default_pkus = _pkus_from_loop_keys(current.get(CONF_SELECTED_LOOPS, []))
         schema = vol.Schema(
@@ -670,6 +731,7 @@ class TechlanOptionsFlow(config_entries.OptionsFlow):
             # Пустой фильтр ПКУ = «реле не нужны» — это осознанное сохранение.
             if selected_relays or not selected_pkus:
                 loops_data = getattr(self, "_pending_loops", None) or {}
+                readers = getattr(self, "_pending_readers", None) or []
                 return self.async_create_entry(
                     title="",
                     data={
@@ -680,6 +742,7 @@ class TechlanOptionsFlow(config_entries.OptionsFlow):
                         CONF_WS_PATH: current[CONF_WS_PATH],
                         CONF_SCAN_INTERVAL: current[CONF_SCAN_INTERVAL],
                         CONF_SELECTED_RELAYS: sorted(set(selected_relays)),
+                        CONF_SELECTED_READERS: readers,
                         # per-relay карты сохраняем, чтобы не потерять настройки
                         CONF_RELAY_TIME: current.get(CONF_RELAY_TIME, {}),
                         CONF_RELAY_PROGRAM: current.get(CONF_RELAY_PROGRAM, {}),
@@ -712,3 +775,53 @@ class TechlanOptionsFlow(config_entries.OptionsFlow):
             }
         )
         return self.async_show_form(step_id="relays", data_schema=schema)
+
+    async def async_step_readers(
+        self, user_input: dict | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Pick the readers (controllers, напр. С2000-2) to expose — шаг 2 из 4.
+
+        Порядок настроек: Подключение → **Считыватели** → Шлейфы → Реле
+        (запись сохраняется на последнем шаге). Шаг двухфазный, как и у реле:
+        сначала оператор отмечает ПКУ, затем выбирает считыватели этих ПКУ.
+        """
+        current = getattr(self, "_pending", None) or {
+            **self.config_entry.data,
+            **self.config_entry.options,
+        }
+        selected_pkus: list = []
+        selected_readers: list = []
+        if user_input is not None:
+            selected_pkus = list(user_input.get(READER_PKU_FIELD, []) or [])
+            selected_readers = list(user_input.get(CONF_SELECTED_READERS, []) or [])
+            # Запоминаем выбор считывателей; запись создаётся в конце
+            # (на шаге реле), чтобы не потерять шлейфы/реле.
+            self._pending_readers = sorted(set(selected_readers))
+            return await self.async_step_loops()
+        else:
+            selected_pkus = _pkus_from_reader_keys(
+                current.get(CONF_SELECTED_READERS, [])
+            )
+
+        readers: list = []
+        if selected_pkus:
+            try:
+                readers = _filter_readers(
+                    await _discover_readers_cached(current, selected_pkus),
+                    selected_pkus,
+                )
+            except TechlanApiError:
+                readers = []
+
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    READER_PKU_FIELD, default=selected_pkus
+                ): _select(_pku_filter_options(await _safe_pkus(current))),
+                vol.Optional(
+                    CONF_SELECTED_READERS,
+                    default=current.get(CONF_SELECTED_READERS, []),
+                ): _select(_reader_options(readers)),
+            }
+        )
+        return self.async_show_form(step_id="readers", data_schema=schema)

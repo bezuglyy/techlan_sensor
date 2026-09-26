@@ -135,8 +135,8 @@
   },
   "issues": {
     "arm_unreachable": {
-      "title": "ARM-OPS недоступен",
-      "description": "Не удалось получить данные от ARM-OPS/ServerSkif: {error}. Проверьте Core (HTTP 18081 / HTTPS 8443) и службы ARM-OPS."
+      "title": "SecurARM недоступен",
+      "description": "Не удалось получить данные от SecurARM/ServerSkif: {error}. Проверьте Core (HTTP 18081 / HTTPS 8443) и службы SecurARM."
     }
   }
 }

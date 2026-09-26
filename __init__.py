@@ -131,6 +131,19 @@ def _register_parent_device(
         configuration_url=coordinator.configuration_url,
     )
     coordinator.parent_device_id = parent.id
+    # Дочерние устройства пультов — родители приборов: создаём заранее, чтобы
+    # via_device_id у приборов разрешался сразу.
+    for pku in sorted((coordinator.data or {}).get("pkus", {}) or {}):
+        async_get_or_create_device(
+            hass,
+            entry,
+            {(DOMAIN, f"pku_{int(pku)}")},
+            name=f"Скиф ПКУ {int(pku)}",
+            model="ServerSkif PKU",
+            configuration_url=coordinator.configuration_url,
+            via_device_id=coordinator.parent_device_id,
+            via_device=coordinator.parent_identifier,
+        )
 
 
 async def _async_update_listener(

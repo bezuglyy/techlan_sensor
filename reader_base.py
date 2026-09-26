@@ -29,8 +29,8 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 
 from ._shared.shared_api import decode_reader, parse_reader_keys, reader_key
-from ._shared.shared_entities import build_device_info
 from .const import CONF_SELECTED_READERS, DOMAIN
+from .instrument import instrument_device_info
 from .coordinator import TechlanDataUpdateCoordinator
 
 
@@ -59,16 +59,18 @@ def reader_label(pku: int, reader: int, facts: dict[str, Any]) -> str:
     return f"Считыватель ПКУ {pku} · прибор {device} · считыватель {number}"
 
 
-def reader_device_info(coordinator: TechlanDataUpdateCoordinator, pku: int) -> dict:
-    """Child PKU device (the same device the climate sensors attach to)."""
-    return build_device_info(
-        identifiers={(DOMAIN, f"pku_{pku}")},
-        name=f"Скиф ПКУ {pku}",
-        model="ServerSkif PKU",
-        configuration_url=coordinator.configuration_url,
-        via_device_id=coordinator.parent_device_id,
-        via_device=coordinator.parent_identifier,
-    )
+def reader_device_info(
+    coordinator: TechlanDataUpdateCoordinator,
+    pku: int,
+    device: int,
+    facts: dict[str, Any] | None = None,
+) -> dict:
+    """Устройство ПРИБОРА (например С2000-2), а не общее «Скиф ПКУ N».
+
+    Каждый прибор — отдельное устройство HA под родительским устройством пульта,
+    иначе считыватели разных контроллеров сваливаются в одну кучу.
+    """
+    return instrument_device_info(coordinator, pku, device, facts)
 
 
 class TechlanReaderEntity:
@@ -91,8 +93,11 @@ class TechlanReaderEntity:
         self._entry = entry
         self._pku = int(pku)
         self._reader = int(reader)
+        device, _number = decode_reader(self._reader)
         self._attr_unique_id = f"{DOMAIN}_{self._reader_entity_suffix}_{pku}_{reader}"
-        self._attr_device_info = reader_device_info(coordinator, self._pku)
+        self._attr_device_info = reader_device_info(
+            coordinator, self._pku, device, self._facts
+        )
 
     @property
     def _facts(self) -> dict[str, Any]:

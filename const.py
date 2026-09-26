@@ -67,7 +67,7 @@ PLATFORMS = ["sensor", "binary_sensor", "number", "select", "switch", "button"]
 CONFIG_MINOR_VERSION = 5
 
 # Версия интеграции (синхронизировать с manifest.json).
-INTEGRATION_VERSION = "0.7.0"
+INTEGRATION_VERSION = "0.7.1"
 
 # Идентификатор и параметры родительского устройства.
 # Отличается от techlan_ops ("arm_ops"), чтобы устройства двух интеграций

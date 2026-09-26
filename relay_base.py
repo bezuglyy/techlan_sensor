@@ -21,7 +21,6 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 
 from ._shared.shared_api import decode_relay, parse_relay_keys, relay_key
-from ._shared.shared_entities import build_device_info
 from .const import (
     CONF_RELAY_PROGRAM,
     CONF_RELAY_TIME,
@@ -31,6 +30,7 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import TechlanDataUpdateCoordinator
+from .instrument import instrument_device_info
 
 
 def configured_relays(config: dict[str, Any]) -> list[tuple[int, int]]:
@@ -58,16 +58,14 @@ def relay_label(pku: int, relay: int, facts: dict[str, Any]) -> str:
     return f"Реле ПКУ {pku} · прибор {device} · реле {number}"
 
 
-def relay_device_info(coordinator: TechlanDataUpdateCoordinator, pku: int) -> dict:
-    """Child PKU device (the same device the climate sensors attach to)."""
-    return build_device_info(
-        identifiers={(DOMAIN, f"pku_{pku}")},
-        name=f"Скиф ПКУ {pku}",
-        model="ServerSkif PKU",
-        configuration_url=coordinator.configuration_url,
-        via_device_id=coordinator.parent_device_id,
-        via_device=coordinator.parent_identifier,
-    )
+def relay_device_info(
+    coordinator: TechlanDataUpdateCoordinator,
+    pku: int,
+    device: int,
+    facts: dict[str, Any] | None = None,
+) -> dict:
+    """Устройство ПРИБОРА (реле/блок), а не общее «Скиф ПКУ N»."""
+    return instrument_device_info(coordinator, pku, device, facts)
 
 
 class TechlanRelayEntity:
@@ -90,8 +88,11 @@ class TechlanRelayEntity:
         self._entry = entry
         self._pku = int(pku)
         self._relay = int(relay)
+        device, _number = decode_relay(self._relay)
         self._attr_unique_id = f"{DOMAIN}_{self._relay_entity_suffix}_{pku}_{relay}"
-        self._attr_device_info = relay_device_info(coordinator, self._pku)
+        self._attr_device_info = relay_device_info(
+            coordinator, self._pku, device, self._facts
+        )
 
     @property
     def _facts(self) -> dict[str, Any]:

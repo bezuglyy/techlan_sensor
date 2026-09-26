@@ -329,6 +329,8 @@ class TechlanApiClient(PersistentTechlanClient):
             relays = sorted(set(by_pku[pku]))
             states = self._list_values("getRelayState", pku, relays)
             descriptions = self._relay_descriptions(pku, relays)
+            devices = sorted({decode_relay(relay)[0] for relay in relays})
+            meta = self._device_meta(pku, devices)
             for index, relay in enumerate(relays):
                 dev, number = decode_relay(relay)
                 state = states[index] if index < len(states) else None
@@ -340,6 +342,7 @@ class TechlanApiClient(PersistentTechlanClient):
                     "relay": number,
                     "state": int(state) if state is not None else None,
                     "description": description,
+                    **meta.get(dev, {}),
                 }
         return result
 
@@ -480,6 +483,24 @@ class TechlanApiClient(PersistentTechlanClient):
         )
         return result
 
+
+    def _device_meta(self, pku: int, devices: list[int]) -> dict[int, dict[str, str]]:
+        """Описания/типы приборов одного пульта (по одному запросу на ПКУ)."""
+        wanted = sorted({int(item) for item in devices})
+        if not wanted:
+            return {}
+        descriptions = self._list_text("getDeviceDescription", pku, wanted)
+        types = self._list_text("getDeviceTypeStr", pku, wanted)
+        result: dict[int, dict[str, str]] = {}
+        for index, device in enumerate(wanted):
+            result[device] = {
+                "device_description": (
+                    descriptions[index] if index < len(descriptions) else ""
+                ),
+                "device_type": types[index] if index < len(types) else "",
+            }
+        return result
+
     def _list_text(self, funct: str, pku: int, items: list[int]) -> list[str]:
         """Best-effort text list read (empty list on timeout)."""
         try:
@@ -531,6 +552,8 @@ class TechlanApiClient(PersistentTechlanClient):
             readers = sorted(set(by_pku[pku]))
             states = self._list_values("getReaderState", pku, readers)
             descriptions = self._reader_descriptions(pku, readers)
+            devices = sorted({decode_reader(reader)[0] for reader in readers})
+            meta = self._device_meta(pku, devices)
             for index, reader in enumerate(readers):
                 dev, number = decode_reader(reader)
                 state = states[index] if index < len(states) else None
@@ -542,6 +565,7 @@ class TechlanApiClient(PersistentTechlanClient):
                     "reader": number,
                     "state": int(state) if state is not None else None,
                     "description": description,
+                    **meta.get(dev, {}),
                 }
         return result
 

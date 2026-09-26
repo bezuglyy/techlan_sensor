@@ -7,7 +7,7 @@
     SecurARM Sensor → Скиф ПКУ 1 → прибор 9 «ТД 1 Этаж» (С2000-2) → считыватели
                                   прибор 54 «Ворота КБИ» (С2000-2) → считыватели
 
-Идентификатор прибора: ``("techlan_sensor", "pku_<pku>_dev_<device>")``.
+Идентификатор прибора: ``("securarm_sensor", "pku_<pku>_dev_<device>")``.
 """
 
 from __future__ import annotations

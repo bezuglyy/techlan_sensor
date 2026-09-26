@@ -1,7 +1,7 @@
 """Общие константы интеграций Techlan ARM/ОПС (канонический источник).
 
-Копируется в ``techlan_ops/_shared/shared_const.py`` и
-``techlan_sensor/_shared/shared_const.py`` скриптом ``tools/sync-ha-shared.py``.
+Копируется в ``securarm/_shared/shared_const.py`` и
+``securarm_sensor/_shared/shared_const.py`` скриптом ``tools/sync-ha-shared.py``.
 Не редактировать копии вручную.
 """
 

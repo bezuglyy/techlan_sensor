@@ -1,7 +1,7 @@
 """Общий WebSocket-клиент ServerSkif через прокси ARM (канонический источник).
 
-Копируется в ``techlan_ops/_shared/shared_api.py`` и
-``techlan_sensor/_shared/shared_api.py`` скриптом ``tools/sync-ha-shared.py``.
+Копируется в ``securarm/_shared/shared_api.py`` и
+``securarm_sensor/_shared/shared_api.py`` скриптом ``tools/sync-ha-shared.py``.
 Не редактировать копии вручную.
 
 Слой не зависит от Home Assistant, поэтому его чистые функции и логика

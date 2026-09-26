@@ -1,7 +1,7 @@
 """Общий DataUpdateCoordinator для интеграций ARM/ОПС.
 
-Копируется в ``techlan_ops/_shared/shared_coordinator.py`` и
-``techlan_sensor/_shared/shared_coordinator.py`` скриптом
+Копируется в ``securarm/_shared/shared_coordinator.py`` и
+``securarm_sensor/_shared/shared_coordinator.py`` скриптом
 ``tools/sync-ha-shared.py``. Не редактировать копии вручную.
 
 Помимо опроса ServerSkif координатор:
@@ -95,7 +95,7 @@ class TechlanBaseCoordinator(DataUpdateCoordinator[dict]):
 
     async def _async_update_data(self) -> dict:
         try:
-            # ``selected_relays`` поддерживает только клиент techlan_sensor;
+            # ``selected_relays`` поддерживает только клиент securarm_sensor;
             # остальные интеграции получают прежнюю сигнатуру вызова.
             extra: dict[str, Any] = {}
             if self.selected_relays is not None:

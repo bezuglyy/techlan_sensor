@@ -3,14 +3,14 @@
 Общая механика постоянного соединения/лимитов — в ``_shared/shared_api.py``
 (канонический источник — ``tools/ha-shared/shared_api.py``).
 
-``techlan_sensor`` читает состояние разделов/шлейфов (АЦП, температура,
+``securarm_sensor`` читает состояние разделов/шлейфов (АЦП, температура,
 влажность) и — по решению пользователя от 22.09.2026 — управляет **реле**
 (управляемыми выходами ServerSkif): программы, переключение, время, и —
 по решению пользователя от 25.09.2026 — управляет **считывателями**
 (контроллерами доступа, напр. С2000-2): открытие доступа, свободный проход,
 запрет доступа.
 
-Управление разделами (arm/disarm) по-прежнему живёт только в ``techlan_ops``.
+Управление разделами (arm/disarm) по-прежнему живёт только в ``securarm``.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ __all__ = ["TechlanApiClient", "TechlanApiError", "websocket_url"]
 
 
 class TechlanApiClient(PersistentTechlanClient):
-    """Read-only ServerSkif API client for techlan_sensor."""
+    """Read-only ServerSkif API client for securarm_sensor."""
 
     # --- discovery (config flow selector) ------------------------------------
 

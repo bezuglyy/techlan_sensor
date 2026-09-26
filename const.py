@@ -60,17 +60,17 @@ from ._shared.shared_const import (
     TEMPERATURE_ALARM_CODE,
 )
 
-DOMAIN = "techlan_sensor"
+DOMAIN = "securarm_sensor"
 PLATFORMS = ["sensor", "binary_sensor", "number", "select", "switch", "button"]
 
 # Версия схемы config entry: minor обновляется при миграциях (async_migrate_entry).
 CONFIG_MINOR_VERSION = 5
 
 # Версия интеграции (синхронизировать с manifest.json).
-INTEGRATION_VERSION = "0.7.2"
+INTEGRATION_VERSION = "1.0.0"
 
 # Идентификатор и параметры родительского устройства.
-# Отличается от techlan_ops ("arm_ops"), чтобы устройства двух интеграций
+# Отличается от securarm ("arm_ops"), чтобы устройства двух интеграций
 # не смешивались.
 PARENT_IDENTIFIER = "arm_sensor"
 DEVICE_NAME = "SecurARM Sensor"

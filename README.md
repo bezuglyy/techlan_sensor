@@ -1,3 +1,7 @@
+# SecurARM Sensor — интеграция Home Assistant (климат, реле, считыватели)
+
+> **Изменения 1.0.0 (26.09.2026):** домен переименован `techlan_sensor` → **`securarm_sensor`** (BREAKING). Добавлено управление **считывателями С2000-2** (`controlReader`) и реле; каждый прибор — отдельное устройство HA. Логика: [docs/c2000-2-relays-readers.md](https://github.com/bezuglyy/securarm/blob/main/docs/c2000-2-relays-readers.md).
+
 # SecurARM Sensor
 ![Release](https://img.shields.io/github/v/release/bezuglyy/techlan_sensor?label=Release&style=flat-square) ![HACS](https://img.shields.io/badge/HACS-Custom%20Repository-purple?style=flat-square) ![License](https://img.shields.io/github/license/bezuglyy/techlan_sensor?style=flat-square) ![HA](https://img.shields.io/badge/HA-2025.1%2B-2ea44f?style=flat-square)
 Кастомная интеграция для [Home Assistant](https://www.home-assistant.io) · версия **0.6.3**.
